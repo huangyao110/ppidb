@@ -2,9 +2,10 @@
 SequenceFetcher — batch retrieval of protein sequences from UniProt.
 
 Features:
-  - Batch API calls (200 proteins per request) for efficiency
+  - Batch API calls for efficiency
   - Local disk cache to avoid redundant downloads
-  - Automatic retry with exponential backoff
+  - Automatic retry with exponential backoff via urllib3
+  - Connection pooling for stability
   - Isoform handling (strips isoform suffix, e.g. P12345-2 → P12345)
   - Output as FASTA file or dict {uniprot_id: sequence}
   - Optional subcellular compartment fetching for NegativeSampler
@@ -12,23 +13,22 @@ Features:
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
-import os
-import time
 import warnings
 from pathlib import Path
+from threading import Lock
 from typing import Dict, List, Optional, Union
 
 import requests
-
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+from tqdm import tqdm
 
 # UniProt REST API endpoint
 UNIPROT_API = "https://rest.uniprot.org/uniprotkb/accessions"
-UNIPROT_FIELDS = "accession,sequence,organism_id,subcellular_location"
-BATCH_SIZE = 200
-MAX_RETRIES = 3
-RETRY_DELAY = 2.0  # seconds
-
+BATCH_SIZE = 100     # 降低单批次数量，避免 URL 过长或负载过大
+MAX_WORKERS = 10     # 降低并发数，50并发极易被 UniProt 封禁/限流
 
 class SequenceFetcher:
     """
@@ -40,21 +40,6 @@ class SequenceFetcher:
         Directory to cache downloaded sequences.
         Default: ~/.ppidb/sequence_cache/
         Set to None to disable caching.
-
-    Examples
-    --------
-    >>> fetcher = SequenceFetcher()
-
-    >>> # Fetch sequences as dict
-    >>> seqs = fetcher.fetch(["P04637", "P53350", "O15111"], as_dict=True)
-    >>> seqs["P04637"][:20]
-    'MEEPQSDPSVEPPLSQETF'
-
-    >>> # Fetch and save as FASTA
-    >>> fetcher.fetch(ds.proteins(), output_fasta="proteins.fasta")
-
-    >>> # Fetch subcellular compartments
-    >>> compartments = fetcher.fetch_compartments(["P04637", "P53350"])
     """
 
     def __init__(self, cache_dir: Optional[Union[str, Path]] = None):
@@ -63,7 +48,30 @@ class SequenceFetcher:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._cache_file = self.cache_dir / "sequences.json"
+        self._cache_lock = Lock()
         self._cache: Dict[str, str] = self._load_cache()
+        
+        # 初始化带连接池和自动重试机制的 Session
+        self._session = self._create_robust_session()
+
+    def _create_robust_session(self) -> requests.Session:
+        """创建一个稳健的 HTTP Session, 包含自动重试和连接池功能"""
+        session = requests.Session()
+        # 遇到 429(限流) 或 5xx(服务器错误) 时自动指数退避重试
+        retry = Retry(
+            total=5,
+            backoff_factor=1.0, 
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET"]
+        )
+        adapter = HTTPAdapter(
+            max_retries=retry, 
+            pool_connections=MAX_WORKERS, 
+            pool_maxsize=MAX_WORKERS
+        )
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        return session
 
     # ── Cache management ──────────────────────────────────────────────────────
 
@@ -74,18 +82,18 @@ class SequenceFetcher:
         return {}
 
     def _save_cache(self) -> None:
-        with open(self._cache_file, "w") as f:
-            json.dump(self._cache, f)
+        with self._cache_lock:
+            with open(self._cache_file, "w") as f:
+                json.dump(self._cache, f)
 
     def cache_size(self) -> int:
-        """Number of sequences in local cache."""
         return len(self._cache)
 
     def clear_cache(self) -> None:
-        """Clear the local sequence cache."""
-        self._cache = {}
-        if self._cache_file.exists():
-            self._cache_file.unlink()
+        with self._cache_lock:
+            self._cache = {}
+            if self._cache_file.exists():
+                self._cache_file.unlink()
         print("Cache cleared.")
 
     # ── Core fetch ────────────────────────────────────────────────────────────
@@ -100,27 +108,7 @@ class SequenceFetcher:
     ) -> Union[Dict[str, str], str]:
         """
         Fetch sequences for a list of UniProt accessions.
-
-        Parameters
-        ----------
-        proteins : list[str]
-            UniProt accession IDs (e.g. ['P04637', 'P53350']).
-            Isoform suffixes (e.g. 'P04637-2') are handled automatically.
-        as_dict : bool
-            If True, return {uniprot_id: sequence} dict.
-            If False (default), return FASTA-formatted string.
-        output_fasta : str | Path | None
-            If provided, save FASTA to this file.
-        include_isoforms : bool
-            If True, keep isoform IDs as-is. If False (default), strip
-            isoform suffix and use canonical sequence.
-        verbose : bool
-            Print progress.
-
-        Returns
-        -------
-        dict[str, str] | str
-            Sequences as dict or FASTA string.
+        (接口和参数完全保持不变)
         """
         # Normalize IDs
         if not include_isoforms:
@@ -128,44 +116,66 @@ class SequenceFetcher:
         proteins = sorted(set(proteins))
 
         # Split into cached and uncached
-        cached = {p: self._cache[p] for p in proteins if p in self._cache}
+        with self._cache_lock:
+            cached = {p: self._cache[p] for p in proteins if p in self._cache}
         uncached = [p for p in proteins if p not in self._cache]
 
         if verbose:
             print(f"Fetching sequences: {len(proteins):,} total, "
                   f"{len(cached):,} cached, {len(uncached):,} to download")
 
-        # Fetch uncached in batches
-        fetched = {}
-        failed = []
-        for i in range(0, len(uncached), BATCH_SIZE):
-            batch = uncached[i: i + BATCH_SIZE]
-            if verbose:
-                print(f"  Batch {i//BATCH_SIZE + 1}/{(len(uncached)-1)//BATCH_SIZE + 1}: "
-                      f"{len(batch)} proteins...", end=" ", flush=True)
-            result, batch_failed = self._fetch_batch(batch)
-            fetched.update(result)
-            failed.extend(batch_failed)
-            if verbose:
-                print(f"OK ({len(result)} fetched, {len(batch_failed)} failed)")
+        # Fetch uncached in batches (Parallel)
+        if uncached:
+            fetched = {}
+            failed = []
+            
+            batches = [uncached[i: i + BATCH_SIZE] for i in range(0, len(uncached), BATCH_SIZE)]
+            
+            with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                future_to_batch = {executor.submit(self._fetch_batch, batch): batch for batch in batches}
+                
+                completed_count = 0
+                for future in concurrent.futures.as_completed(future_to_batch):
+                    batch_res, batch_failed = future.result()
+                    fetched.update(batch_res)
+                    failed.extend(batch_failed)
+                    
+                    completed_count += 1
+                    if verbose:
+                        print(f"  Batch {completed_count}/{len(batches)}: "
+                              f"OK ({len(batch_res)} fetched, {len(batch_failed)} failed)")
 
-        # Update cache
-        self._cache.update(fetched)
-        self._save_cache()
+            # 单个重试 fallback (更加稳健的方式)
+            if failed:
+                if verbose:
+                    print(f"Attempting to recover {len(failed)} failed IDs individually...")
+                recovered, still_failed = self._fetch_individual_fallback(failed, verbose=verbose)
+                fetched.update(recovered)
+                failed = still_failed
+                if verbose:
+                    print(f"Recovered: {len(recovered)}, Still failed: {len(failed)}")
 
-        if failed:
-            warnings.warn(
-                f"{len(failed)} proteins could not be fetched: "
-                f"{failed[:5]}{'...' if len(failed) > 5 else ''}"
-            )
+            # Update cache
+            with self._cache_lock:
+                self._cache.update(fetched)
+                self._save_cache()
 
-        # Combine all sequences
-        all_seqs = {**cached, **fetched}
+            if failed:
+                warnings.warn(
+                    f"{len(failed)} proteins could not be fetched: "
+                    f"{failed[:5]}{'...' if len(failed) > 5 else ''}"
+                )
+                with open("failed_fetch.txt", "a") as f:
+                    for pid in failed:
+                        f.write(f"{pid}\n")
+            
+            cached.update(fetched)
+
+        all_seqs = cached
 
         if verbose:
             print(f"Total sequences retrieved: {len(all_seqs):,} / {len(proteins):,}")
 
-        # Output
         if output_fasta:
             fasta_str = self._to_fasta(all_seqs)
             with open(output_fasta, "w") as f:
@@ -180,42 +190,74 @@ class SequenceFetcher:
         self,
         accessions: List[str],
     ) -> tuple[Dict[str, str], List[str]]:
-        """Fetch a batch of sequences from UniProt REST API."""
-        for attempt in range(MAX_RETRIES):
+        """使用底层自带重试机制的 Session 请求批次"""
+        try:
+            response = self._session.get(
+                UNIPROT_API,
+                params={
+                    "accessions": ",".join(accessions),
+                    "fields": "accession,sequence",
+                    "format": "json",
+                    "size": len(accessions),
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            fetched = {}
+            found_ids = set()
+            for entry in data.get("results", []):
+                acc = entry["primaryAccession"]
+                seq = entry.get("sequence", {}).get("value", "")
+                if seq:
+                    fetched[acc] = seq
+                    found_ids.add(acc)
+
+            failed = [a for a in accessions if a not in found_ids]
+            return fetched, failed
+
+        except requests.exceptions.RequestException:
+            # 如果重试多次依然失败，直接交给单条 fallback 处理
+            return {}, accessions
+
+    def _fetch_individual_fallback(self, accessions: List[str], verbose: bool = True) -> tuple[Dict[str, str], List[str]]:
+        """
+        放弃不稳定的 curl 和 biopython, 直接使用带重试的 Session 请求 FASTA 文本流。
+        这是最纯粹、最不容易出错的方式。
+        """
+        fetched = {}
+        failed = []
+
+        def _fetch_one(acc):
+            url = f"https://rest.uniprot.org/uniprotkb/{acc}.fasta"
             try:
-                response = requests.get(
-                    UNIPROT_API,
-                    params={
-                        "accessions": ",".join(accessions),
-                        "fields": "accession,sequence",
-                        "format": "json",
-                        "size": len(accessions),
-                    },
-                    timeout=30,
-                )
-                response.raise_for_status()
-                data = response.json()
+                # 即使是单个请求，也享受自动重试和防限流机制
+                resp = self._session.get(url, timeout=15)
+                resp.raise_for_status()
+                lines = resp.text.splitlines()
+                if not lines:
+                    return acc, None
+                seq = "".join(line.strip() for line in lines if not line.startswith(">"))
+                return acc, seq
+            except requests.exceptions.RequestException:
+                return acc, None
 
-                fetched = {}
-                found_ids = set()
-                for entry in data.get("results", []):
-                    acc = entry["primaryAccession"]
-                    seq = entry.get("sequence", {}).get("value", "")
-                    if seq:
-                        fetched[acc] = seq
-                        found_ids.add(acc)
-
-                failed = [a for a in accessions if a not in found_ids]
-                return fetched, failed
-
-            except requests.exceptions.RequestException as e:
-                if attempt < MAX_RETRIES - 1:
-                    time.sleep(RETRY_DELAY * (2 ** attempt))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            future_to_acc = {executor.submit(_fetch_one, acc): acc for acc in accessions}
+            
+            iterator = concurrent.futures.as_completed(future_to_acc)
+            if verbose:
+                iterator = tqdm(iterator, total=len(accessions), desc="Fallback fetch", unit="seq")
+                
+            for future in iterator:
+                acc, seq = future.result()
+                if seq:
+                    fetched[acc] = seq
                 else:
-                    warnings.warn(f"Failed to fetch batch after {MAX_RETRIES} attempts: {e}")
-                    return {}, accessions
-
-        return {}, accessions
+                    failed.append(acc)
+        
+        return fetched, failed
 
     # ── Subcellular compartments ──────────────────────────────────────────────
 
@@ -224,26 +266,10 @@ class SequenceFetcher:
         proteins: List[str],
         verbose: bool = True,
     ) -> Dict[str, str]:
-        """
-        Fetch subcellular localization for proteins from UniProt.
-
-        Returns {uniprot_id: compartment_name} mapping.
-        Used by NegativeSampler.subcellular_sample().
-
-        Parameters
-        ----------
-        proteins : list[str]
-            UniProt accession IDs.
-
-        Returns
-        -------
-        dict[str, str]
-            {uniprot_id: primary_compartment}
-        """
+        """(接口保持不变)"""
         proteins = sorted(set(p.split("-")[0] for p in proteins))
         compartment_cache_file = self.cache_dir / "compartments.json"
 
-        # Load compartment cache
         comp_cache = {}
         if compartment_cache_file.exists():
             with open(compartment_cache_file) as f:
@@ -255,78 +281,88 @@ class SequenceFetcher:
             print(f"Fetching compartments: {len(proteins):,} total, "
                   f"{len(comp_cache):,} cached, {len(uncached):,} to download")
 
-        for i in range(0, len(uncached), BATCH_SIZE):
-            batch = uncached[i: i + BATCH_SIZE]
-            if verbose:
-                print(f"  Batch {i//BATCH_SIZE + 1}/{(len(uncached)-1)//BATCH_SIZE + 1}...",
-                      end=" ", flush=True)
-            result = self._fetch_compartments_batch(batch)
-            comp_cache.update(result)
-            if verbose:
-                print(f"OK ({len(result)} fetched)")
-
-        # Save cache
-        with open(compartment_cache_file, "w") as f:
-            json.dump(comp_cache, f)
+        if uncached:
+            fetched_batch = {}
+            failed_batch = []
+            
+            batches = [uncached[i: i + BATCH_SIZE] for i in range(0, len(uncached), BATCH_SIZE)]
+            
+            with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                future_to_batch = {executor.submit(self._fetch_compartments_batch, batch): batch for batch in batches}
+                
+                completed_count = 0
+                for future in concurrent.futures.as_completed(future_to_batch):
+                    batch_res, failed = future.result()
+                    fetched_batch.update(batch_res)
+                    failed_batch.extend(failed)
+                    
+                    completed_count += 1
+                    if verbose:
+                        print(f"  Batch {completed_count}/{len(batches)}: "
+                              f"OK ({len(batch_res)} fetched, {len(failed)} failed)")
+            
+            comp_cache.update(fetched_batch)
+            with open(compartment_cache_file, "w") as f:
+                json.dump(comp_cache, f)
+            
+            if failed_batch:
+                warnings.warn(f"{len(failed_batch)} compartments could not be fetched.")
+                with open("failed_fetch_compartments.txt", "a") as f:
+                    for pid in failed_batch:
+                        f.write(f"{pid}\n")
 
         return {p: comp_cache.get(p, "Unknown") for p in proteins}
 
-    def _fetch_compartments_batch(self, accessions: List[str]) -> Dict[str, str]:
-        """Fetch subcellular location for a batch."""
-        for attempt in range(MAX_RETRIES):
-            try:
-                response = requests.get(
-                    UNIPROT_API,
-                    params={
-                        "accessions": ",".join(accessions),
-                        "fields": "accession,cc_subcellular_location",
-                        "format": "json",
-                        "size": len(accessions),
-                    },
-                    timeout=30,
-                )
-                response.raise_for_status()
-                data = response.json()
+    def _fetch_compartments_batch(self, accessions: List[str]) -> tuple[Dict[str, str], List[str]]:
+        try:
+            response = self._session.get(
+                UNIPROT_API,
+                params={
+                    "accessions": ",".join(accessions),
+                    "fields": "accession,cc_subcellular_location",
+                    "format": "json",
+                    "size": len(accessions),
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            data = response.json()
 
-                result = {}
-                for entry in data.get("results", []):
-                    acc = entry["primaryAccession"]
-                    locs = entry.get("comments", [])
-                    compartment = "Unknown"
-                    for loc in locs:
-                        if loc.get("commentType") == "SUBCELLULAR LOCATION":
-                            subcell = loc.get("subcellularLocations", [])
-                            if subcell:
-                                loc_val = subcell[0].get("location", {}).get("value", "Unknown")
-                                # Simplify to major compartment
-                                compartment = _simplify_compartment(loc_val)
-                                break
-                    result[acc] = compartment
-                return result
+            result = {}
+            found_ids = set()
+            for entry in data.get("results", []):
+                acc = entry["primaryAccession"]
+                found_ids.add(acc)
+                locs = entry.get("comments", [])
+                compartment = "Unknown"
+                for loc in locs:
+                    if loc.get("commentType") == "SUBCELLULAR LOCATION":
+                        subcell = loc.get("subcellularLocations", [])
+                        if subcell:
+                            loc_val = subcell[0].get("location", {}).get("value", "Unknown")
+                            compartment = _simplify_compartment(loc_val)
+                            break
+                result[acc] = compartment
+            
+            failed = [a for a in accessions if a not in found_ids]
+            return result, failed
 
-            except requests.exceptions.RequestException as e:
-                if attempt < MAX_RETRIES - 1:
-                    time.sleep(RETRY_DELAY * (2 ** attempt))
-                else:
-                    return {}
-        return {}
+        except requests.exceptions.RequestException:
+            return {}, accessions
 
     # ── FASTA utilities ───────────────────────────────────────────────────────
 
     @staticmethod
     def _to_fasta(sequences: Dict[str, str]) -> str:
-        """Convert sequence dict to FASTA string."""
         lines = []
         for pid, seq in sorted(sequences.items()):
             lines.append(f">{pid}")
-            # Wrap at 60 chars
             for i in range(0, len(seq), 60):
                 lines.append(seq[i:i+60])
         return "\n".join(lines) + "\n"
 
     @staticmethod
     def parse_fasta(fasta_path: Union[str, Path]) -> Dict[str, str]:
-        """Parse a FASTA file into {id: sequence} dict."""
         sequences = {}
         current_id = None
         current_seq = []
@@ -344,7 +380,6 @@ class SequenceFetcher:
             sequences[current_id] = "".join(current_seq)
         return sequences
 
-
 # ── Compartment simplification ────────────────────────────────────────────────
 
 _COMPARTMENT_MAP = {
@@ -360,10 +395,9 @@ _COMPARTMENT_MAP = {
     "Endosome": ["endosom"],
 }
 
-
 def _simplify_compartment(loc: str) -> str:
     loc_lower = loc.lower()
     for compartment, keywords in _COMPARTMENT_MAP.items():
         if any(kw in loc_lower for kw in keywords):
             return compartment
-    return loc  # Return as-is if no match
+    return loc

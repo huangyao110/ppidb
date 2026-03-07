@@ -141,49 +141,7 @@ from ppidb.split import Splitter
 splitter = Splitter(ds.filter.high_confidence())
 ```
 
-### Strategy 1: Random split
-
-Fast baseline. Does **not** prevent protein overlap between folds — expect high data leakage (>90% C1 pairs).
-
-```python
-split = splitter.random_split(train=0.8, val=0.1, test=0.1, seed=42)
-split.summary()
-# SplitResult(train=..., val=..., test=...)
-```
-
-### Strategy 2: Cold split (protein-level)
-
-No protein in test/val appears in train. Simulates generalization to unseen proteins. Guarantees C3=100%.
-
-```python
-split = splitter.cold_split(test_frac=0.2, val_frac=0.1, seed=42)
-```
-
-Cross-pool pairs (where one protein is in train and the other in test) are discarded.
-
-### Strategy 3: Greedy C3 split
-
-Selects a **dense subgraph** as the test pool by iteratively adding the protein with the most connections into the current test pool. Produces far more test pairs than cold_split at the same C3=100% guarantee.
-
-```python
-split = splitter.greedy_c3_split(test_protein_frac=0.2, seed=42)
-```
-
-### Strategy 4: Community C3 split
-
-Detects Louvain communities in the PPI graph (via `igraph`) and assigns whole communities to the test pool. Exploits the modular structure of real PPI networks.
-
-```python
-split = splitter.community_c3_split(
-    test_protein_frac=0.2,
-    resolution=1.0,   # Louvain resolution; higher = more, smaller communities
-    seed=42,
-)
-```
-
-Requires: `pip install igraph`
-
-### Strategy 5: Similarity-aware split
+### Strategy 1: Similarity-aware split (Default)
 
 Proteins in test/val have < `identity_threshold` sequence identity to any train protein. Prevents leakage from homologs.
 
@@ -199,6 +157,39 @@ split = splitter.similarity_split(
 ```
 
 Requires: `conda install -c bioconda mmseqs2`
+
+### Strategy 2: Greedy C3 split (Sequence-constrained)
+
+Selects a **dense subgraph** as the test pool by iteratively adding the protein with the most connections into the current test pool.
+Ensures **strict sequence similarity** separation: no protein in the test pool has > `identity_threshold` similarity to any protein in the train pool.
+
+```python
+split = splitter.greedy_c3_split(
+    test_protein_frac=0.2, 
+    seed=42,
+    sequence_dict=seqs,       # Required for strict similarity check
+    identity_threshold=0.3
+)
+```
+
+Produces far more test pairs than simple cold split while maintaining strict leakage control.
+
+### Strategy 3: Community C3 split (Sequence-constrained)
+
+Detects Louvain communities in the PPI graph (via `igraph`) and assigns whole communities to the test pool.
+Also enforces **strict sequence similarity** separation.
+
+```python
+split = splitter.community_c3_split(
+    test_protein_frac=0.2,
+    resolution=1.0,   # Louvain resolution; higher = more, smaller communities
+    seed=42,
+    sequence_dict=seqs,
+    identity_threshold=0.3
+)
+```
+
+Requires: `pip install igraph`
 
 ### Saving and loading splits
 
@@ -325,9 +316,13 @@ from ppidb.sequence import SequenceFetcher
 
 fetcher = SequenceFetcher()   # caches to ~/.ppidb/sequence_cache/ by default
 
-# Fetch as dict
+# Fetch as dict (Parallel download with 10 threads)
 seqs = fetcher.fetch(["P04637", "P53350"], as_dict=True)
 seqs["P04637"][:20]   # 'MEEPQSDPSVEPPLSQETF'
+
+# Automatic fallback
+# If batch download fails, it automatically retries with Biopython or single requests
+# Failed IDs are logged to failed_fetch.txt
 
 # Fetch all proteins in a dataset and save as FASTA
 fetcher.fetch(ds.proteins(), output_fasta="proteins.fasta")

@@ -261,13 +261,16 @@ def negatives(db, full_db, strategy, ratio, seed, output, fmt, combine):
               help="Output FASTA file path.")
 @click.option("--cache-dir", default=None,
               help="Cache directory for sequences (default: ~/.ppidb/sequence_cache/)")
-def fetch_sequences(db, output, cache_dir):
+@click.option("--compartments-output", default=None,
+              help="Optional output TSV path for subcellular compartments.")
+def fetch_sequences(db, output, cache_dir, compartments_output):
     """
     Fetch protein sequences from UniProt for all proteins in the database.
 
     \b
     Examples:
         ppidb fetch-sequences --db human_ltp.parquet --output proteins.fasta
+        ppidb fetch-sequences --db human_ltp.parquet --output proteins.fasta --compartments-output compartments.tsv
     """
     from ppidb.sequence import SequenceFetcher
 
@@ -279,6 +282,15 @@ def fetch_sequences(db, output, cache_dir):
     fetcher = SequenceFetcher(cache_dir=cache_dir)
     fetcher.fetch(proteins, output_fasta=output)
     click.echo(f"Done. Sequences saved to {output}")
+
+    if compartments_output:
+        click.echo("Fetching subcellular compartments...")
+        compartments = fetcher.fetch_compartments(proteins, verbose=True)
+        with open(compartments_output, "w") as f:
+            f.write("protein\tcompartment\n")
+            for protein in sorted(compartments):
+                f.write(f"{protein}\t{compartments[protein]}\n")
+        click.echo(f"Done. Compartments saved to {compartments_output}")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
