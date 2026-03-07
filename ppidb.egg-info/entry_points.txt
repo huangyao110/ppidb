@@ -1,0 +1,2 @@
+[console_scripts]
+ppidb = ppidb.cli.main:cli
