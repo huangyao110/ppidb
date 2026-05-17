@@ -48,9 +48,17 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument("--out-dir", type=Path, required=True)
-    parser.add_argument("--merged-root", type=Path, default=DEFAULT_MERGED_ROOT)
-    parser.add_argument("--merged-proteins", type=Path, default=None)
-    parser.add_argument("--merged-interactions", type=Path, default=None)
+    parser.add_argument(
+        "--merged",
+        dest="merged_root",
+        type=Path,
+        metavar="MERGED",
+        default=DEFAULT_MERGED_ROOT,
+        help="Path to data/merged; proteins.csv and interactions.csv are read from this directory.",
+    )
+    parser.add_argument("--merged-root", dest="merged_root", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--merged-proteins", type=Path, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--merged-interactions", type=Path, default=None, help=argparse.SUPPRESS)
     parser.add_argument(
         "--sequences-csv",
         type=Path,
@@ -670,4 +678,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
