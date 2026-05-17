@@ -24,10 +24,13 @@ python ppidb.py dedup
 Validate dataset collections:
 
 ```bash
+python ppidb.py validate-merged --merged-root data/merged
 python ppidb.py validate --dataset-root data/datasets
 ```
 
 List available database commands with `python ppidb.py commands`. For quick syntax checks, run `python -m compileall p2psiglip_db ppidb.py`.
+
+`data/merged` is an API contract. Keep `proteins.csv`, `sequences.csv`, `interactions.csv`, and `pairs.csv` column names, column order, ID formats, evidence enums, unordered-pair rules, row counts, and SHA256 snapshot hashes aligned with `p2psiglip_db/data/merged_contract.py`. Any database refresh must pass `python ppidb.py validate-merged`.
 
 ## Coding Style & Naming Conventions
 
@@ -35,7 +38,7 @@ Use Python 3.11+, 4-space indentation, and clear `snake_case` names for function
 
 ## Testing Guidelines
 
-There is no formal coverage gate. After code changes, run `python -m compileall p2psiglip_db ppidb.py`. For data-pipeline changes, run the smallest reproducible command on a sample or limited input, then report input paths, output paths, row counts, and missing embeddings. For split logic, run `python ppidb.py validate` before using generated datasets.
+There is no formal coverage gate. After code changes, run `python -m compileall p2psiglip_db ppidb.py`. For data-pipeline changes, run the smallest reproducible command on a sample or limited input, then report input paths, output paths, row counts, and missing embeddings. For merged-database changes, run `python ppidb.py validate-merged`; for split logic, run `python ppidb.py validate` before using generated datasets.
 
 ## Commit & Pull Request Guidelines
 

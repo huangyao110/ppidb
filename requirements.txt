@@ -5,6 +5,7 @@ esm==3.2.1
 numpy
 pandas
 h5py
+polars
 tqdm
 requests
 transformers

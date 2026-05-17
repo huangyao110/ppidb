@@ -29,6 +29,7 @@ DATA_COMMANDS: dict[str, str] = {
     "rf2-train-val": "p2psiglip_db.data.build_rf2_train_plus_filtered_val",
     "unified-host-embeds": "p2psiglip_db.data.prepare_unified_host_embeddings",
     "validate": "p2psiglip_db.data.validate_training_split_collections",
+    "validate-merged": "p2psiglip_db.data.validate_merged_contract",
 }
 
 STRUCTURE_COMMANDS: dict[str, str] = {
@@ -78,6 +79,7 @@ Common commands:
   dedup                 deduplicate merged interaction pairs
   collections           build canonical hash-ID split collections
   validate              validate generated dataset collections
+  validate-merged       validate data/merged API contract
   embed                 run a PLM embedding extractor
   h5                    build a relational PPI HDF5 file
 

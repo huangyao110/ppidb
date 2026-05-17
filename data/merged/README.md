@@ -29,6 +29,28 @@
 | `reports/` | - | 合并、去重、证据清洗和质量分层的统计报告。 |
 | `figures/` | - | 数据库统计图。Nature 风格汇总图位于 `figures/nature/`。 |
 
+## 硬性数据库契约
+
+`data/merged` 是下游 API 的输入边界，不允许贡献者或 agent 随意漂移。契约写死在 `p2psiglip_db/data/merged_contract.py`，任何重新构建数据库的变更都必须通过：
+
+```bash
+python ppidb.py validate-merged --merged-root data/merged
+```
+
+固定规则如下：
+
+- 文件名固定为 `proteins.csv`、`sequences.csv`、`interactions.csv`、`pairs.csv`。
+- 表头和列顺序固定，不能新增、删除、重命名或重排字段。
+- `fpid` 是唯一公开 protein id，格式固定为 `FP` + 7 位数字，例如 `FP0000001`。
+- `fpid` 必须从 `FP0000001` 连续递增，同一个 `fpid` 永远不能指向另一条序列。
+- `protein_md5` 必须等于规范化氨基酸序列的 MD5。
+- `sequences.csv` 必须严格等于 `proteins.csv` 投影出的 `id,sequence`。
+- `interactions.csv` 一行只能表示一个无序 pair，且必须满足 `FPid_1 < FPid_2`，禁止 self-pair 和重复 pair。
+- `pairs.csv` 必须严格等于 `interactions.csv` 投影出的 `fpid_1,fpid_2,label`。
+- `Evidence_Type`、`Evidence_Tags`、`PPI_Tier`、`PPI_Source` 只能使用 contract 中列出的枚举。
+- `label=0` 只能表示 `negative_synthetic`，正负样本冲突时必须采用 positive wins。
+- 当前发布快照的行数和 SHA256 已写入 `EXPECTED_SNAPSHOT`。任何改变当前 CSV 字节、行顺序或 ID 映射的更新都必须同步修改 contract，并说明 API 兼容性影响。
+
 ## Protein 表
 
 `proteins.csv` 是蛋白质目录表，核心字段如下。

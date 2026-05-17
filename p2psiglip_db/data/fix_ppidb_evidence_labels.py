@@ -29,6 +29,7 @@ REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from p2psiglip_db.data.merged_contract import INTERACTIONS_COLUMNS, order_interactions
 from p2psiglip_db.data.split_utils import pair_key
 
 
@@ -187,6 +188,8 @@ def repair_file(
         ]
         stats["rows_read"] += len(chunk)
         chunk["Evidence_Type"] = fixed
+        if set(INTERACTIONS_COLUMNS).issubset(chunk.columns):
+            chunk = order_interactions(chunk)
         chunk.to_csv(output_path, mode="w" if first else "a", header=first, index=False)
         first = False
 

@@ -25,6 +25,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from p2psiglip_db.data.merged_contract import order_pairs, order_proteins, order_sequences
+
 ROOT = Path(__file__).resolve().parents[2]
 EXT = ROOT / "data" / "external"
 OUT = ROOT / "runs" / "merged"
@@ -640,13 +642,14 @@ def main() -> None:
 
     # Write outputs
     print(f"\n[write] -> {OUT}")
-    proteins.to_csv(OUT / "proteins_merged.csv", index=False)
+    order_proteins(proteins).to_csv(OUT / "proteins_merged.csv", index=False)
     interactions.to_csv(OUT / "interactions_merged.csv", index=False)
-    proteins[["fpid", "sequence"]].rename(columns={"fpid": "id"}).to_csv(
-        OUT / "sequences_merged.csv", index=False)
-    interactions[["FPid_1", "FPid_2", "label"]].rename(
-        columns={"FPid_1": "fpid_1", "FPid_2": "fpid_2"}).to_csv(
-        OUT / "pairs_merged.csv", index=False)
+    sequences = proteins[["fpid", "sequence"]].rename(columns={"fpid": "id"})
+    order_sequences(sequences).to_csv(OUT / "sequences_merged.csv", index=False)
+    pairs = interactions[["FPid_1", "FPid_2", "label"]].rename(
+        columns={"FPid_1": "fpid_1", "FPid_2": "fpid_2"}
+    )
+    order_pairs(pairs).to_csv(OUT / "pairs_merged.csv", index=False)
 
     # Crosstab summaries for the report
     report["_crosstab_PPI_Source_x_Evidence_Type"] = pd.crosstab(

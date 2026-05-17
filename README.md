@@ -20,6 +20,7 @@ python ppidb.py --help
 python ppidb.py commands
 python ppidb.py merge
 python ppidb.py dedup
+python ppidb.py validate-merged --quick
 python ppidb.py validate --dataset-root data/datasets
 ```
 
@@ -54,3 +55,18 @@ data/external/  ->  data/merged/  ->  data/datasets/
 
 Large upstream sources and generated outputs are intentionally gitignored. Keep
 only code, README files, manifests, and small metadata under version control.
+
+## Merged Database Contract
+
+`data/merged` is treated as a public API surface. Its table names, column order,
+ID formats, evidence enums, pair construction rules, row counts, and file hashes are locked in
+`p2psiglip_db.data.merged_contract`. Before publishing regenerated merged data,
+run:
+
+```bash
+python ppidb.py validate-merged --merged-root data/merged
+```
+
+Do not rename columns, change `FP0000001`-style IDs, reorder pair endpoints, change snapshot bytes, or
+introduce new evidence/source labels without updating the contract and API
+consumers in the same change.
