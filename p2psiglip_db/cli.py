@@ -12,6 +12,7 @@ DATA_COMMANDS: dict[str, str] = {
     "cluster-map": "p2psiglip_db.data.build_hash_cluster_map",
     "collections": "p2psiglip_db.data.build_training_split_collections",
     "dedup": "p2psiglip_db.data.dedup_merged",
+    "download-data": "p2psiglip_db.data.download_database",
     "fix-ppidb-evidence": "p2psiglip_db.data.fix_ppidb_evidence_labels",
     "h5": "p2psiglip_db.data.create_ppi_h5_esm",
     "host-benchmarks": "p2psiglip_db.data.prepare_host_corpus_benchmarks",
@@ -77,6 +78,7 @@ Usage:
 Common commands:
   merge                 merge data/external sources into master tables
   dedup                 deduplicate merged interaction pairs
+  download-data         download and extract the published data archive
   collections           build canonical hash-ID split collections
   validate              validate generated dataset collections
   validate-merged       validate data/merged API contract

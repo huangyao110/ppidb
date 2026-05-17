@@ -18,6 +18,7 @@ Run from the repository root:
 ```bash
 python ppidb.py --help
 python ppidb.py commands
+python ppidb.py download-data --url gs://<bucket>/<archive>.tar.gz
 python ppidb.py merge
 python ppidb.py dedup
 python ppidb.py validate-merged --quick
@@ -55,6 +56,23 @@ data/external/  ->  data/merged/  ->  data/datasets/
 
 Large upstream sources and generated outputs are intentionally gitignored. Keep
 only code, README files, manifests, and small metadata under version control.
+
+## Download Data
+
+Published database archives can be installed into the local `data/` layout with:
+
+```bash
+python ppidb.py download-data --url https://storage.googleapis.com/<bucket>/<archive>.tar.gz
+```
+
+`gs://bucket/object` URLs are also accepted for public Google Cloud Storage
+objects. The command downloads, safely extracts into `data/`, and then runs
+`validate-merged` unless `--no-validate` is provided. Use `PPIDB_DATA_URL` and
+`PPIDB_DATA_SHA256` to make the command one-line in production:
+
+```bash
+PPIDB_DATA_URL=gs://<bucket>/<archive>.tar.gz python ppidb.py download-data
+```
 
 ## Merged Database Contract
 

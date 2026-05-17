@@ -24,6 +24,7 @@ python ppidb.py dedup
 Validate dataset collections:
 
 ```bash
+python ppidb.py download-data --url gs://<bucket>/<archive>.tar.gz
 python ppidb.py validate-merged --merged-root data/merged
 python ppidb.py validate --dataset-root data/datasets
 ```
@@ -31,6 +32,8 @@ python ppidb.py validate --dataset-root data/datasets
 List available database commands with `python ppidb.py commands`. For quick syntax checks, run `python -m compileall p2psiglip_db ppidb.py`.
 
 `data/merged` is an API contract. Keep `proteins.csv`, `sequences.csv`, `interactions.csv`, and `pairs.csv` column names, column order, ID formats, evidence enums, unordered-pair rules, row counts, and SHA256 snapshot hashes aligned with `p2psiglip_db/data/merged_contract.py`. Any database refresh must pass `python ppidb.py validate-merged`.
+
+Published Google Cloud data archives should be installed only through `python ppidb.py download-data`; it extracts safely into `data/` and validates the merged database contract by default.
 
 ## Coding Style & Naming Conventions
 
