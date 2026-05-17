@@ -28,6 +28,7 @@ DATA_COMMANDS: dict[str, str] = {
     "rf2-embeds": "p2psiglip_db.data.prepare_rf2_mplm3_hash_embeds",
     "rf2-interface-tiers": "p2psiglip_db.data.prepare_rf2_ppi_interface_tiers",
     "rf2-train-val": "p2psiglip_db.data.build_rf2_train_plus_filtered_val",
+    "split-c3": "p2psiglip_db.split.c3",
     "unified-host-embeds": "p2psiglip_db.data.prepare_unified_host_embeddings",
     "validate": "p2psiglip_db.data.validate_training_split_collections",
     "validate-merged": "p2psiglip_db.data.validate_merged_contract",
@@ -79,6 +80,7 @@ Common commands:
   merge                 merge data/external sources into master tables
   dedup                 deduplicate merged interaction pairs
   download-data         download and extract the published data archive
+  split-c3              build C3-filtered train_pos from hash-ID val/test sets
   collections           build canonical hash-ID split collections
   validate              validate generated dataset collections
   validate-merged       validate data/merged API contract

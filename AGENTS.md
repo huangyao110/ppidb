@@ -4,7 +4,7 @@
 
 This repository builds and maintains a self-contained PPI database for P2PSigLip workflows. The main data flow is `data/external/` raw upstream sources, `data/merged/` integrated master tables, and `data/datasets/` training-ready split collections. Treat `data/external/` as immutable input and regenerate downstream artifacts with scripts.
 
-`p2psiglip_db/data/` is the primary script area. Use it for source merging, evidence normalization, deduplication, hash-based splits, and dataset validation. `p2psiglip_db/embeds/` keeps PLM-specific embedding extractors and structure/FASTA helpers used by the database build pipeline.
+`p2psiglip_db/data/` is the database construction area. Use it for source merging, evidence normalization, deduplication, merged-contract validation, and legacy dataset builders. `p2psiglip_db/split/` owns reusable split commands such as C3 train/val/test generation. `p2psiglip_db/embeds/` keeps PLM-specific embedding extractors and structure/FASTA helpers used by the database build pipeline.
 
 ## Build, Test, and Development Commands
 
@@ -25,6 +25,7 @@ Validate dataset collections:
 
 ```bash
 python ppidb.py download-data --url gs://<bucket>/<archive>.tar.gz
+python ppidb.py split-c3 --sequences-csv data/datasets/<name>/sequences.csv --test-csv data/datasets/<name>/test.csv --out-dir data/datasets/<new_name>
 python ppidb.py validate-merged --merged-root data/merged
 python ppidb.py validate --dataset-root data/datasets
 ```
@@ -41,7 +42,7 @@ Use Python 3.11+, 4-space indentation, and clear `snake_case` names for function
 
 ## Testing Guidelines
 
-There is no formal coverage gate. After code changes, run `python -m compileall p2psiglip_db ppidb.py`. For data-pipeline changes, run the smallest reproducible command on a sample or limited input, then report input paths, output paths, row counts, and missing embeddings. For merged-database changes, run `python ppidb.py validate-merged`; for split logic, run `python ppidb.py validate` before using generated datasets.
+There is no formal coverage gate. After code changes, run `python -m compileall p2psiglip_db ppidb.py`. For data-pipeline changes, run the smallest reproducible command on a sample or limited input, then report input paths, output paths, row counts, and missing embeddings. For merged-database changes, run `python ppidb.py validate-merged`; for split logic, run `python ppidb.py split-c3 --help` plus a small smoke run, then validate any generated collection before training.
 
 ## Commit & Pull Request Guidelines
 

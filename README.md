@@ -21,6 +21,7 @@ python ppidb.py commands
 python ppidb.py download-data --url gs://<bucket>/<archive>.tar.gz
 python ppidb.py merge
 python ppidb.py dedup
+python ppidb.py split-c3 --help
 python ppidb.py validate-merged --quick
 python ppidb.py validate --dataset-root data/datasets
 ```
@@ -45,6 +46,25 @@ Structure helper commands live under the `structure` namespace:
 python ppidb.py structure --help
 python ppidb.py structure extract-3di --help
 ```
+
+## C3 Splits
+
+Use `split-c3` to build positive-only CLIP training data while keeping train
+sequences out of C3 clusters touched by validation/test positives:
+
+```bash
+python ppidb.py split-c3 \
+  --sequences-csv data/datasets/p2psiglip_hash_v1/sequences.csv \
+  --test-csv data/datasets/p2psiglip_hash_v1/test.csv \
+  --out-dir data/datasets/my_split \
+  --identity 0.4 --coverage 0.8 --cov-mode 0
+```
+
+The input pair CSV must be exactly `ID_1,ID_2,label`, where IDs are
+`md5(sequence)`. Outputs are `train_pos.csv`, optional `val.csv`/`test.csv`,
+`sequences.csv`, `holdout_cluster_map.csv`, and `split_report.json`. To sample
+holdouts from PPIDB instead of providing files, use `--val-size`, `--test-size`,
+`--val-neg-size`, or `--test-neg-size`.
 
 ## Data Layout
 
