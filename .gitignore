@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Generated database artifacts and upstream releases
+data/external/
+data/datasets/
+data/embeds/
+data/merged/*
+!data/merged/README.md
+!data/README.md
+
+# Experiment and scan outputs
+runs/
+benchmark/
+figures/
+genome_scan/
+
+# Large generated arrays, tables, and model artifacts
+*.csv
+*.tsv
+*.parquet
+*.h5
+*.hdf5
+*.npy
+*.npz
+*.fa
+*.fasta
+*.pdb
+*.cif
+*.pth
+*.pt
+
+# Local/editor files
+.DS_Store
+.idea/
+.vscode/
