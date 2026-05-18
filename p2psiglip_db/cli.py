@@ -34,6 +34,33 @@ DATA_COMMANDS: dict[str, str] = {
     "validate-merged": "p2psiglip_db.data.validate_merged_contract",
 }
 
+DATA_COMMAND_DESCRIPTIONS: dict[str, str] = {
+    "canonical-fasta": "write canonical FASTA files from hash-ID sequence tables",
+    "cluster-map": "build an MMseqs cluster map for hash-ID sequences",
+    "collections": "build canonical train/val/test hash-ID dataset collections",
+    "dedup": "deduplicate merged interaction pairs after source merging",
+    "download-data": "download a published data archive, extract into data/, and validate it",
+    "fix-ppidb-evidence": "repair PPIDB evidence labels from original PPIDB metadata",
+    "h5": "build an HDF5 PPI dataset from pair CSVs and embedding arrays",
+    "host-benchmarks": "prepare host/pathogen benchmark split files",
+    "host-corpus": "prepare the host/pathogen corpus",
+    "host-train": "prepare host/pathogen training data",
+    "integrate-embeddings": "copy or register precomputed embedding arrays into the project layout",
+    "link-embeddings": "link existing embedding arrays into data/embeds",
+    "merge": "merge data/external source files into data/merged master tables",
+    "merged-c3": "legacy fixed-test C3 split builder from data/merged",
+    "negatives": "build explicit pair-level negative examples",
+    "normalize-evidence": "normalize evidence labels and PPI tiers in merged tables",
+    "rf2-benchmark": "prepare RF2 PPI benchmark files",
+    "rf2-embeds": "prepare RF2 MPLM3 hash embedding inputs",
+    "rf2-interface-tiers": "prepare RF2 interface tier annotations",
+    "rf2-train-val": "build RF2 train plus filtered validation files",
+    "split-c3": "build positive train_pos.csv after C3 filtering against val/test positives",
+    "unified-host-embeds": "prepare unified host/pathogen embedding inputs",
+    "validate": "validate generated data/datasets split collections",
+    "validate-merged": "validate the locked data/merged public API contract",
+}
+
 STRUCTURE_COMMANDS: dict[str, str] = {
     "build-source-tsv": "p2psiglip_db.embeds.build_structure_source_tsv",
     "copy-afdb": "p2psiglip_db.embeds.copy_afdb_structures",
@@ -46,6 +73,20 @@ STRUCTURE_COMMANDS: dict[str, str] = {
     "predict-3di": "p2psiglip_db.embeds.predict_3di",
     "predict-3di-aa": "p2psiglip_db.embeds.predict_3di_from_aa",
     "simplefold": "p2psiglip_db.embeds.simplefold_predict",
+}
+
+STRUCTURE_COMMAND_DESCRIPTIONS: dict[str, str] = {
+    "build-source-tsv": "build sequence_structure_sources.tsv from AFDB/MiniFold/SimpleFold outputs",
+    "copy-afdb": "copy matching AFDB monomer structures for project sequences",
+    "copy-afdb-manifest": "copy AFDB structures using a UniProt manifest",
+    "download-afdb-manifest": "download AFDB structures listed in a UniProt manifest",
+    "export-unmatched": "export sequences still missing usable structures",
+    "extract-3di": "extract Foldseek 3Di sequences from available structures",
+    "map-afdb": "map project sequence IDs to AFDB/UniProt accessions",
+    "minifold": "low-level MiniFold prediction wrapper; prefer top-level struct for new runs",
+    "predict-3di": "predict 3Di tokens with the ProstT5 3Di predictor",
+    "predict-3di-aa": "predict 3Di tokens directly from amino-acid sequences",
+    "simplefold": "low-level SimpleFold prediction wrapper; prefer top-level struct for new runs",
 }
 
 STRUCT_BACKENDS: dict[str, str] = {
@@ -71,9 +112,20 @@ def _run_module(module_name: str, argv: Sequence[str], display_name: str) -> int
     return 0
 
 
+def _print_table(items: dict[str, str], *, prefix: str = "", indent: str = "  ") -> None:
+    width = max(len(name) for name in items) if items else 0
+    for name in sorted(items):
+        label = f"{prefix}{name}"
+        print(f"{indent}{label:<{width + len(prefix)}}  {items[name]}")
+
+
 def _print_help() -> None:
     print(
-        """P2PSigLip database command runner.
+        """PPIDB command runner.
+
+Run database construction, validation, dataset splitting, embeddings, and
+structure prediction from one entry point. Commands should be run from the
+repository root so relative paths like data/merged resolve correctly.
 
 Usage:
   ppidb.py <command> [args...]
@@ -82,20 +134,46 @@ Usage:
   ppidb.py structure <command> [args...]
   ppidb.py commands
 
-Common commands:
-  merge                 merge data/external sources into master tables
-  dedup                 deduplicate merged interaction pairs
-  download-data         download and extract the published data archive
-  split-c3              build C3-filtered train_pos from hash-ID val/test sets
-  collections           build canonical hash-ID split collections
-  validate              validate generated dataset collections
-  validate-merged       validate data/merged API contract
-  embed                 run a PLM embedding extractor
-  struct                predict monomer structures from sequence CSV/FASTA
-  h5                    build a relational PPI HDF5 file
+Primary workflows:
+  ppidb.py download-data --url gs://<bucket>/<archive>.tar.gz
+      Install a published data archive into data/ and validate data/merged.
 
-Run command-specific help with:
+  ppidb.py validate-merged --merged-root data/merged
+      Check the locked public database contract: headers, IDs, enums, rows,
+      pair rules, and snapshot SHA256 values.
+
+  ppidb.py split-c3 --merged data/merged
+      --test-csv <test.csv> --sequences-csv <sequences.csv>
+      --out-dir data/datasets/<split>
+      Build positive-only train_pos.csv after C3 filtering against val/test
+      positive endpoints.
+
+  ppidb.py embed esm2 -i data/merged/sequences.csv -o data/embeds/esm2 --pool residue
+      Extract PLM embeddings. Most extractors support --pool mean|max|cls|residue.
+
+  ppidb.py struct -i data/merged/sequences.csv -o data/embeds/strucs/simplefold_100M
+      Predict monomer structures. Defaults to SimpleFold; use --backend minifold
+      for MiniFold.
+
+Important command groups:
+  merge / dedup / normalize-evidence
+      Rebuild data/merged from raw external sources.
+  split-c3 / collections / validate
+      Build and validate training-ready data/datasets collections.
+  embed
+      Dispatch to PLM extractors: esmc, esm2, prott5, prostt5, prostt5_3di,
+      saprot, profam, prosst_2048.
+  struct
+      User-facing structure prediction CLI.
+  structure
+      Lower-level structure utilities: AFDB copy/download, 3Di extraction,
+      source manifests, and backend-specific wrappers.
+
+More help:
+  ppidb.py commands
   ppidb.py <command> --help
+  ppidb.py embed --list
+  ppidb.py embed <plm> --help
   ppidb.py struct --help
   ppidb.py struct simplefold --help
   ppidb.py structure <command> --help
@@ -104,16 +182,14 @@ Run command-specific help with:
 
 
 def _print_commands() -> None:
-    print("Data commands:")
-    for name in sorted(DATA_COMMANDS):
-        print(f"  {name}")
-    print("\nStructure commands:")
-    for name in sorted(STRUCTURE_COMMANDS):
-        print(f"  structure {name}")
+    print("Data and dataset commands:")
+    _print_table(DATA_COMMAND_DESCRIPTIONS)
     print("\nEmbedding command:")
-    print("  embed")
+    print("  embed             run PLM extractors; use `ppidb.py embed --list`")
     print("\nStructure prediction command:")
-    print("  struct")
+    print("  struct            predict monomer structures with SimpleFold or MiniFold")
+    print("\nLow-level structure utility commands:")
+    _print_table(STRUCTURE_COMMAND_DESCRIPTIONS, prefix="structure ")
 
 
 def _run_embed(argv: Sequence[str]) -> int:
@@ -132,9 +208,27 @@ def _print_struct_help() -> None:
 Predict monomer structures from sequence CSV/FASTA inputs. Default backend is
 simplefold. Backend-specific args are forwarded unchanged.
 
+Inputs:
+  -i/--input may be repeated and accepts CSV files with id,sequence columns or
+  FASTA files. If no input is provided, the backend wrappers can auto-discover
+  sequence files under data/datasets using --datasets-root and --dataset-glob.
+
+Outputs:
+  SimpleFold writes predictions_<model>/ plus simplefold_predictions_manifest.csv.
+  MiniFold writes predictions_minifold/ plus minifold_predictions_manifest.csv.
+  Structure filenames are keyed by sequence MD5 where possible.
+
+Common options forwarded to both backends:
+  -i/--input <path>      sequence CSV/FASTA input; repeat for multiple files
+  --out-dir <path>       output directory for structures and manifests
+  --limit <n>            cap selected sequences for smoke tests or batches
+  --min-len/--max-len    length filters before prediction
+  --dry-run              load/select sequences without invoking the backend
+
 Examples:
   ppidb.py struct -i data/merged/sequences.csv --out-dir data/embeds/strucs/simplefold_100M --limit 100
   ppidb.py struct --backend minifold -i data/merged/sequences.csv --out-dir data/embeds/strucs/minifold_48L --limit 100
+  ppidb.py struct simplefold --dry-run --limit 10
 
 Backend help:
   ppidb.py struct simplefold --help
@@ -173,10 +267,27 @@ def _run_struct(argv: Sequence[str]) -> int:
 
 def _run_structure(argv: Sequence[str]) -> int:
     if not argv or argv[0] in {"-h", "--help"}:
-        print("Usage: ppidb.py structure <command> [args...]\n")
-        print("Available structure commands:")
-        for name in sorted(STRUCTURE_COMMANDS):
-            print(f"  {name}")
+        print(
+            """Usage:
+  ppidb.py structure <command> [args...]
+
+Lower-level structure utilities. Use top-level `ppidb.py struct` for routine
+SimpleFold/MiniFold structure prediction. Use this namespace for AFDB structure
+copy/download, 3Di extraction, source manifests, and backend-specific tools.
+
+Available structure commands:
+"""
+        )
+        _print_table(STRUCTURE_COMMAND_DESCRIPTIONS)
+        print(
+            """
+Examples:
+  ppidb.py structure copy-afdb --help
+  ppidb.py structure build-source-tsv --help
+  ppidb.py structure extract-3di --help
+  ppidb.py structure simplefold --help
+"""
+        )
         return 0
 
     command, *command_args = argv
