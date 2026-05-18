@@ -18,8 +18,10 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -110,6 +112,49 @@ def ensure_shared_boltz_cache(out_dir: Path, ckpt_dir: Path) -> None:
         local_cache.symlink_to(shared_cache.resolve(), target_is_directory=True)
 
 
+def default_simplefold_bin() -> Path | None:
+    env_bin = os.environ.get("SIMPLEFOLD_BIN")
+    if env_bin:
+        return Path(env_bin)
+    repo_cli = Path("external/ml-simplefold/src/simplefold/cli.py")
+    if repo_cli.is_file():
+        return None
+    legacy = Path("/home/zlab/miniconda3/envs/lucafold/bin/simplefold")
+    if legacy.is_file():
+        return legacy
+    found = shutil.which("simplefold")
+    if found:
+        return Path(found)
+    return None
+
+
+def default_simplefold_python() -> Path:
+    env_python = os.environ.get("SIMPLEFOLD_PYTHON")
+    if env_python:
+        return Path(env_python)
+    legacy = Path("/home/zlab/miniconda3/envs/lucafold/bin/python")
+    if legacy.is_file():
+        return legacy
+    return Path(sys.executable)
+
+
+def simplefold_command(args) -> tuple[list[str], dict[str, str]]:
+    env = os.environ.copy()
+    if args.simplefold_bin is not None:
+        return [str(args.simplefold_bin)], env
+
+    src_dir = args.simplefold_repo / "src"
+    cli_py = src_dir / "simplefold" / "cli.py"
+    if not cli_py.is_file():
+        raise FileNotFoundError(
+            f"SimpleFold CLI not found. Pass --simplefold-bin or set --simplefold-repo correctly: {cli_py}"
+        )
+    env["PYTHONPATH"] = str(src_dir.resolve()) + (
+        os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
+    )
+    return [str(args.simplefold_python), "-c", "from simplefold.cli import main; main()"], env
+
+
 def write_manifest(path: Path, rows: list[dict[str, object]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
@@ -134,7 +179,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--datasets-root", type=Path, default=Path("data/datasets"))
     parser.add_argument("--dataset-glob", default="*hash_v1/sequences.csv")
     parser.add_argument("--out-dir", type=Path, default=Path("data/embeds/strucs/simplefold_100M"))
-    parser.add_argument("--simplefold-bin", type=Path, default=Path("/home/zlab/miniconda3/envs/lucafold/bin/simplefold"))
+    parser.add_argument("--simplefold-bin", type=Path, default=default_simplefold_bin())
+    parser.add_argument("--simplefold-repo", type=Path, default=Path("external/ml-simplefold"))
+    parser.add_argument("--simplefold-python", type=Path, default=default_simplefold_python())
     parser.add_argument("--simplefold-model", default="simplefold_100M")
     parser.add_argument("--ckpt-dir", type=Path, default=Path("data/embeds/strucs/simplefold_checkpoints"))
     parser.add_argument("--backend", choices=["torch", "mlx"], default="torch")
@@ -203,8 +250,9 @@ def main() -> None:
         for target in batch:
             write_fasta(fasta_dir / f"{target.sequence_md5}.fasta", target)
 
+        launcher, env = simplefold_command(args)
         cmd = [
-            str(args.simplefold_bin),
+            *launcher,
             "--simplefold_model",
             args.simplefold_model,
             "--ckpt_dir",
@@ -233,7 +281,7 @@ def main() -> None:
             f"[batch {batch_idx}/{len(batches)}] running SimpleFold on {len(batch):,} sequences",
             flush=True,
         )
-        subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True, env=env)
 
         for target in batch:
             pred_path = pred_dir / f"{target.sequence_md5}_sampled_0{suffix}"
@@ -252,6 +300,9 @@ def main() -> None:
         "inputs": [str(p) for p in inputs],
         "out_dir": str(args.out_dir),
         "prediction_dir": str(pred_dir),
+        "simplefold_bin": None if args.simplefold_bin is None else str(args.simplefold_bin),
+        "simplefold_repo": str(args.simplefold_repo),
+        "simplefold_python": str(args.simplefold_python),
         "simplefold_model": args.simplefold_model,
         "backend": args.backend,
         "output_format": args.output_format,

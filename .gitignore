@@ -16,6 +16,10 @@ data/merged/*
 !data/merged/README.md
 !data/README.md
 
+# Local third-party tool checkouts. Keep only the manifest README in git.
+external/*
+!external/README.md
+
 # Experiment and scan outputs
 runs/
 benchmark/

@@ -13,6 +13,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -34,6 +35,16 @@ def default_cache() -> Path:
     if existing.exists():
         return existing
     return Path("data/embeds/strucs/minifold_cache")
+
+
+def default_minifold_python() -> Path:
+    env_python = os.environ.get("MINIFOLD_PYTHON")
+    if env_python:
+        return Path(env_python)
+    legacy = Path("/home/zlab/miniconda3/envs/minifold/bin/python")
+    if legacy.is_file():
+        return legacy
+    return Path(sys.executable)
 
 
 def existing_prediction(pred_dir: Path, sequence_md5: str) -> bool:
@@ -182,8 +193,8 @@ def build_parser() -> argparse.ArgumentParser:
     runtime.add_argument(
         "--minifold-python",
         type=Path,
-        default=Path("/home/zlab/miniconda3/envs/minifold/bin/python"),
-        help="Python executable for the MiniFold environment.",
+        default=default_minifold_python(),
+        help="Python executable for the MiniFold environment; MINIFOLD_PYTHON overrides the default.",
     )
     runtime.add_argument(
         "--cache",
