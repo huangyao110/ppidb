@@ -15,7 +15,6 @@ DATA_COMMANDS: dict[str, str] = {
     "download-data": "p2psiglip_db.data.download_database",
     "fix-ppidb-evidence": "p2psiglip_db.data.fix_ppidb_evidence_labels",
     "3di": "p2psiglip_db.embeds.get_3di",
-    "get-3di": "p2psiglip_db.embeds.get_3di",
     "h5": "p2psiglip_db.data.create_ppi_h5_esm",
     "host-benchmarks": "p2psiglip_db.data.prepare_host_corpus_benchmarks",
     "host-corpus": "p2psiglip_db.data.prepare_host_pathogen_corpus",
@@ -23,7 +22,6 @@ DATA_COMMANDS: dict[str, str] = {
     "integrate-embeddings": "p2psiglip_db.data.integrate_precomputed_embeddings",
     "link-embeddings": "p2psiglip_db.data.link_existing_embeddings",
     "merge": "p2psiglip_db.data.merge_external_sources",
-    "merged-c3": "p2psiglip_db.data.build_merged_hash_c3_split",
     "negatives": "p2psiglip_db.data.build_explicit_pair_negatives",
     "normalize-evidence": "p2psiglip_db.data.normalize_evidence_labels",
     "rf2-benchmark": "p2psiglip_db.data.prepare_rf2_ppi_benchmark",
@@ -44,7 +42,6 @@ DATA_COMMAND_DESCRIPTIONS: dict[str, str] = {
     "download-data": "download a published data archive, extract into data/, and validate it",
     "fix-ppidb-evidence": "repair PPIDB evidence labels from original PPIDB metadata",
     "3di": "generate 3Di FASTA with foldseek, ProstT5, or the convolutional head",
-    "get-3di": "alias of 3di",
     "h5": "build an HDF5 PPI dataset from pair CSVs and embedding arrays",
     "host-benchmarks": "prepare host/pathogen benchmark split files",
     "host-corpus": "prepare the host/pathogen corpus",
@@ -52,7 +49,6 @@ DATA_COMMAND_DESCRIPTIONS: dict[str, str] = {
     "integrate-embeddings": "copy or register precomputed embedding arrays into the project layout",
     "link-embeddings": "link existing embedding arrays into data/embeds",
     "merge": "merge data/external source files into data/merged master tables",
-    "merged-c3": "legacy fixed-test C3 split builder from data/merged",
     "negatives": "build explicit pair-level negative examples",
     "normalize-evidence": "normalize evidence labels and PPI tiers in merged tables",
     "rf2-benchmark": "prepare RF2 PPI benchmark files",
@@ -71,12 +67,8 @@ STRUCTURE_COMMANDS: dict[str, str] = {
     "copy-afdb-manifest": "p2psiglip_db.embeds.copy_afdb_from_uniprot_manifest",
     "download-afdb-manifest": "p2psiglip_db.embeds.download_afdb_from_uniprot_manifest",
     "export-unmatched": "p2psiglip_db.embeds.export_unmatched_sequences",
-    "extract-3di": "p2psiglip_db.embeds.extract_structure_3di",
-    "3di": "p2psiglip_db.embeds.get_3di",
     "map-afdb": "p2psiglip_db.embeds.map_afdb_uniprot_ids",
     "minifold": "p2psiglip_db.embeds.minifold_predict",
-    "predict-3di": "p2psiglip_db.embeds.predict_3di",
-    "predict-3di-aa": "p2psiglip_db.embeds.predict_3di_from_aa",
     "simplefold": "p2psiglip_db.embeds.simplefold_predict",
 }
 
@@ -86,12 +78,8 @@ STRUCTURE_COMMAND_DESCRIPTIONS: dict[str, str] = {
     "copy-afdb-manifest": "copy AFDB structures using a UniProt manifest",
     "download-afdb-manifest": "download AFDB structures listed in a UniProt manifest",
     "export-unmatched": "export sequences still missing usable structures",
-    "extract-3di": "extract Foldseek 3Di sequences from available structures",
-    "3di": "unified 3Di FASTA interface: foldseek, ProstT5, or convolutional head",
     "map-afdb": "map project sequence IDs to AFDB/UniProt accessions",
     "minifold": "low-level MiniFold prediction wrapper; prefer top-level struct for new runs",
-    "predict-3di": "predict 3Di tokens with the ProstT5 3Di predictor",
-    "predict-3di-aa": "predict 3Di tokens directly from amino-acid sequences",
     "simplefold": "low-level SimpleFold prediction wrapper; prefer top-level struct for new runs",
 }
 
@@ -174,7 +162,7 @@ Important command groups:
   embed
       Dispatch to PLM extractors: esmc, esm2, prott5, prostt5, prostt5_3di,
       saprot, profam, prosst_2048.
-  3di / get-3di
+  3di
       Produce 3Di FASTA for downstream saprot/prostt5_3di embedding.
   struct
       User-facing structure prediction CLI.
@@ -285,8 +273,9 @@ def _run_structure(argv: Sequence[str]) -> int:
   ppidb.py structure <command> [args...]
 
 Lower-level structure utilities. Use top-level `ppidb.py struct` for routine
-SimpleFold/MiniFold structure prediction. Use this namespace for AFDB structure
-copy/download, 3Di extraction, source manifests, and backend-specific tools.
+SimpleFold/MiniFold structure prediction. Use top-level `ppidb.py 3di` for 3Di
+generation. This namespace remains for AFDB copy/download, source manifests,
+and backend-specific structure tools.
 
 Available structure commands:
 """
@@ -297,7 +286,7 @@ Available structure commands:
 Examples:
   ppidb.py structure copy-afdb --help
   ppidb.py structure build-source-tsv --help
-  ppidb.py structure extract-3di --help
+  ppidb.py 3di --help
   ppidb.py structure simplefold --help
 """
         )

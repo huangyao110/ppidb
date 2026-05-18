@@ -18,7 +18,7 @@ external/*  ──┐
                                   │  p2psiglip_db/data/dedup_merged.py    (polars 32-thread groupby)
                                   ▼
         merged/{interactions,pairs}.csv  ──┐
-                                           │  p2psiglip_db/data/build_merged_hash_c3_split.py
+                                           │  ppidb.py split-c3 --merged data/merged
                                            │  p2psiglip_db/data/build_training_split_collections.py
                                            ▼
                                  datasets/<name>/
