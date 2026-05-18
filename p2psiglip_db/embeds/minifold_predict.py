@@ -103,30 +103,155 @@ def write_manifest(path: Path, rows: list[dict[str, object]]) -> None:
         writer.writerows(rows)
 
 
+class RawDefaultsHelpFormatter(
+    argparse.ArgumentDefaultsHelpFormatter,
+    argparse.RawDescriptionHelpFormatter,
+):
+    """Show defaults while preserving manual line breaks in examples."""
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run MiniFold on local sequence CSV/FASTA files.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        description="Predict monomer structures with MiniFold for PPIDB sequence CSV/FASTA inputs.",
+        epilog=(
+            "Examples:\n"
+            "  ppidb.py struct --backend minifold -i data/merged/sequences.csv "
+            "--out-dir data/embeds/strucs/minifold_48L --limit 100\n"
+            "  ppidb.py struct minifold -i data/datasets/my_split/sequences.csv "
+            "--sequences-per-call 100 --token-per-batch 2048\n"
+            "  ppidb.py struct minifold --dry-run --limit 10\n\n"
+            "Outputs:\n"
+            "  structures: <out-dir>/predictions_minifold/<sequence_md5>.pdb\n"
+            "  manifest:   <out-dir>/minifold_predictions_manifest.csv\n"
+            "  summary:    <out-dir>/minifold_predictions_summary.json"
+        ),
+        formatter_class=RawDefaultsHelpFormatter,
     )
-    parser.add_argument("-i", "--input", action="append", type=Path)
-    parser.add_argument("--datasets-root", type=Path, default=Path("data/datasets"))
-    parser.add_argument("--dataset-glob", default="*hash_v1/sequences.csv")
-    parser.add_argument("--out-dir", type=Path, default=Path("data/embeds/strucs/minifold_48L"))
-    parser.add_argument("--minifold-repo", type=Path, default=Path("external/minifold"))
-    parser.add_argument("--minifold-python", type=Path, default=Path("/home/zlab/miniconda3/envs/minifold/bin/python"))
-    parser.add_argument("--cache", type=Path, default=default_cache())
-    parser.add_argument("--checkpoint", type=Path, default=None)
-    parser.add_argument("--model-size", choices=["48L", "12L"], default="48L")
-    parser.add_argument("--token-per-batch", type=int, default=2048)
-    parser.add_argument("--sequences-per-call", type=int, default=0, help="0 means one MiniFold call for all selected sequences.")
-    parser.add_argument("--compile", action="store_true")
-    parser.add_argument("--kernels", action="store_true")
-    parser.add_argument("--limit", type=int, default=None)
-    parser.add_argument("--min-len", type=int, default=1)
-    parser.add_argument("--max-len", type=int, default=None)
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--manifest", type=Path, default=None)
-    parser.add_argument("--summary-json", type=Path, default=None)
+
+    inputs = parser.add_argument_group("Input selection")
+    inputs.add_argument(
+        "-i",
+        "--input",
+        action="append",
+        type=Path,
+        help=(
+            "Sequence CSV/FASTA input. CSV files must contain id,sequence. "
+            "Repeat -i to combine multiple inputs. If omitted, files are "
+            "auto-discovered with --datasets-root and --dataset-glob."
+        ),
+    )
+    inputs.add_argument(
+        "--datasets-root",
+        type=Path,
+        default=Path("data/datasets"),
+        help="Root used for auto-discovery when no -i/--input is provided.",
+    )
+    inputs.add_argument(
+        "--dataset-glob",
+        default="*hash_v1/sequences.csv",
+        help="Glob under --datasets-root used for auto-discovered sequence CSVs.",
+    )
+
+    outputs = parser.add_argument_group("Outputs")
+    outputs.add_argument(
+        "--out-dir",
+        type=Path,
+        default=Path("data/embeds/strucs/minifold_48L"),
+        help="Directory for work files, predictions_minifold/, manifest, and summary JSON.",
+    )
+    outputs.add_argument(
+        "--manifest",
+        type=Path,
+        default=None,
+        help="Override manifest CSV path. Defaults to <out-dir>/minifold_predictions_manifest.csv.",
+    )
+    outputs.add_argument(
+        "--summary-json",
+        type=Path,
+        default=None,
+        help="Override summary JSON path. Defaults to <out-dir>/minifold_predictions_summary.json.",
+    )
+
+    runtime = parser.add_argument_group("MiniFold runtime")
+    runtime.add_argument(
+        "--minifold-repo",
+        type=Path,
+        default=Path("external/minifold"),
+        help="MiniFold repository directory containing predict.py.",
+    )
+    runtime.add_argument(
+        "--minifold-python",
+        type=Path,
+        default=Path("/home/zlab/miniconda3/envs/minifold/bin/python"),
+        help="Python executable for the MiniFold environment.",
+    )
+    runtime.add_argument(
+        "--cache",
+        type=Path,
+        default=default_cache(),
+        help="MiniFold cache directory; MINIFOLD_CACHE overrides the default.",
+    )
+    runtime.add_argument(
+        "--checkpoint",
+        type=Path,
+        default=None,
+        help="Optional MiniFold checkpoint path passed through to predict.py.",
+    )
+    runtime.add_argument(
+        "--model-size",
+        choices=["48L", "12L"],
+        default="48L",
+        help="MiniFold model size.",
+    )
+    runtime.add_argument(
+        "--compile",
+        action="store_true",
+        help="Pass --compile to MiniFold predict.py.",
+    )
+    runtime.add_argument(
+        "--kernels",
+        action="store_true",
+        help="Pass --kernels to MiniFold predict.py.",
+    )
+
+    batching = parser.add_argument_group("Filtering and batching")
+    batching.add_argument(
+        "--token-per-batch",
+        type=int,
+        default=2048,
+        help="MiniFold token budget passed to predict.py for each backend batch.",
+    )
+    batching.add_argument(
+        "--sequences-per-call",
+        type=int,
+        default=0,
+        help="Split selected sequences into separate MiniFold calls. 0 means one call for all selected sequences.",
+    )
+    batching.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Maximum number of not-yet-predicted unique sequences to select.",
+    )
+    batching.add_argument(
+        "--min-len",
+        type=int,
+        default=1,
+        help="Minimum sequence length to predict.",
+    )
+    batching.add_argument(
+        "--max-len",
+        type=int,
+        default=None,
+        help="Maximum sequence length to predict. Omit for no upper bound.",
+    )
+
+    execution = parser.add_argument_group("Execution")
+    execution.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Load inputs and report selected batches without invoking MiniFold.",
+    )
     return parser
 
 
