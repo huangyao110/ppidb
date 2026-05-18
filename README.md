@@ -48,9 +48,16 @@ residue outputs are `(L,D)` fp16 arrays.
 Structure helper commands live under the `structure` namespace:
 
 ```bash
+python ppidb.py struct -i data/merged/sequences.csv -o data/embeds/strucs/simplefold_100M --limit 100
+python ppidb.py struct --backend minifold -i data/merged/sequences.csv -o data/embeds/strucs/minifold_48L --limit 100
 python ppidb.py structure --help
 python ppidb.py structure extract-3di --help
 ```
+
+Use `struct` for monomer structure prediction. It defaults to SimpleFold and
+also supports MiniFold through `--backend minifold`. Use `structure` for lower
+level structure utilities such as AFDB copy/download, 3Di extraction, and source
+manifest generation.
 
 ## C3 Splits
 

@@ -48,6 +48,11 @@ STRUCTURE_COMMANDS: dict[str, str] = {
     "simplefold": "p2psiglip_db.embeds.simplefold_predict",
 }
 
+STRUCT_BACKENDS: dict[str, str] = {
+    "simplefold": "p2psiglip_db.embeds.simplefold_predict",
+    "minifold": "p2psiglip_db.embeds.minifold_predict",
+}
+
 
 def _run_module(module_name: str, argv: Sequence[str], display_name: str) -> int:
     old_argv = sys.argv[:]
@@ -73,6 +78,7 @@ def _print_help() -> None:
 Usage:
   ppidb.py <command> [args...]
   ppidb.py embed [--list | <plm> args... | --plm <plm> args...]
+  ppidb.py struct [--backend simplefold|minifold] [args...]
   ppidb.py structure <command> [args...]
   ppidb.py commands
 
@@ -85,10 +91,13 @@ Common commands:
   validate              validate generated dataset collections
   validate-merged       validate data/merged API contract
   embed                 run a PLM embedding extractor
+  struct                predict monomer structures from sequence CSV/FASTA
   h5                    build a relational PPI HDF5 file
 
 Run command-specific help with:
   ppidb.py <command> --help
+  ppidb.py struct --help
+  ppidb.py struct simplefold --help
   ppidb.py structure <command> --help
 """
     )
@@ -103,12 +112,63 @@ def _print_commands() -> None:
         print(f"  structure {name}")
     print("\nEmbedding command:")
     print("  embed")
+    print("\nStructure prediction command:")
+    print("  struct")
 
 
 def _run_embed(argv: Sequence[str]) -> int:
     if argv and argv[0] not in {"-h", "--help", "--list"} and not argv[0].startswith("-"):
         argv = ["--plm", argv[0], *argv[1:]]
     return _run_module("p2psiglip_db.data.get_embeddings", argv, "ppidb embed")
+
+
+def _print_struct_help() -> None:
+    print(
+        """Usage:
+  ppidb.py struct [--backend simplefold|minifold] [args...]
+  ppidb.py struct simplefold [args...]
+  ppidb.py struct minifold [args...]
+
+Predict monomer structures from sequence CSV/FASTA inputs. Default backend is
+simplefold. Backend-specific args are forwarded unchanged.
+
+Examples:
+  ppidb.py struct -i data/merged/sequences.csv --out-dir data/embeds/strucs/simplefold_100M --limit 100
+  ppidb.py struct --backend minifold -i data/merged/sequences.csv --out-dir data/embeds/strucs/minifold_48L --limit 100
+
+Backend help:
+  ppidb.py struct simplefold --help
+  ppidb.py struct minifold --help
+"""
+    )
+
+
+def _run_struct(argv: Sequence[str]) -> int:
+    args = list(argv)
+    if not args or args[0] in {"-h", "--help"}:
+        _print_struct_help()
+        return 0
+
+    backend = "simplefold"
+    if args[0] in STRUCT_BACKENDS:
+        backend = args[0]
+        args = args[1:]
+    elif args[0] in {"-b", "--backend"}:
+        if len(args) < 2:
+            print("missing value for --backend", file=sys.stderr)
+            return 2
+        backend = args[1]
+        args = args[2:]
+    elif args[0].startswith("--backend="):
+        backend = args[0].split("=", 1)[1]
+        args = args[1:]
+
+    module_name = STRUCT_BACKENDS.get(backend)
+    if module_name is None:
+        print(f"Unknown struct backend: {backend}", file=sys.stderr)
+        print("Available backends: " + ", ".join(sorted(STRUCT_BACKENDS)), file=sys.stderr)
+        return 2
+    return _run_module(module_name, args, f"ppidb struct {backend}")
 
 
 def _run_structure(argv: Sequence[str]) -> int:
@@ -138,6 +198,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args[0] == "embed":
         return _run_embed(args[1:])
+    if args[0] in {"struct", "predict-struct", "generate-struct"}:
+        return _run_struct(args[1:])
     if args[0] == "structure":
         return _run_structure(args[1:])
 

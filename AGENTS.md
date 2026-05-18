@@ -26,6 +26,7 @@ Validate dataset collections:
 ```bash
 python ppidb.py download-data --url gs://<bucket>/<archive>.tar.gz
 python ppidb.py split-c3 --merged data/merged --sequences-csv data/datasets/<name>/sequences.csv --test-csv data/datasets/<name>/test.csv --out-dir data/datasets/<new_name>
+python ppidb.py struct -i data/merged/sequences.csv --out-dir data/embeds/strucs/simplefold_100M --limit 100
 python ppidb.py validate-merged --merged-root data/merged
 python ppidb.py validate --dataset-root data/datasets
 ```
