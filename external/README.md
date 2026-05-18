@@ -20,7 +20,7 @@ overrides, for example:
 ```bash
 python ppidb.py struct --backend minifold --minifold-repo external/minifold --help
 python ppidb.py struct simplefold --simplefold-repo external/ml-simplefold --help
-python ppidb.py structure extract-3di --foldseek-bin external/foldseek/bin/foldseek --help
+python ppidb.py 3di foldseek --foldseek-bin external/foldseek/bin/foldseek --help
 ```
 
 Install each tool's Python dependencies in the runtime environment used for the

@@ -9,4 +9,6 @@ polars
 tqdm
 requests
 transformers
+sentencepiece
+biopython
 scikit-learn

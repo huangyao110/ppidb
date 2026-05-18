@@ -59,6 +59,19 @@ also supports MiniFold through `--backend minifold`. Use `structure` for lower
 level structure utilities such as AFDB copy/download, 3Di extraction, and source
 manifest generation.
 
+3Di FASTA generation has a short unified interface:
+
+```bash
+python ppidb.py 3di foldseek -i data/embeds/manifests/strucs/sequence_structure_sources.tsv --sequence-csv data/merged/sequences.csv -o data/embeds/manifests/strucs/structure_3di_full.fasta
+python ppidb.py 3di foldseek -i data/embeds/strucs/simplefold_100M -o data/embeds/manifests/strucs/structure_3di_full.fasta
+python ppidb.py 3di prostt5 -i data/merged/sequences.csv -o data/embeds/manifests/3di/prostt5_3di.fasta
+python ppidb.py 3di conv -i data/merged/sequences.csv -o data/embeds/manifests/3di/conv_3di.fasta
+```
+
+Use `foldseek` for existing source manifests, structure files, or structure
+directories; `prostt5` for encoder-decoder AA to 3Di prediction; and `conv` for
+the ProstT5 encoder plus CNN head route.
+
 ## C3 Splits
 
 Use `split-c3` to build positive-only CLIP training data while keeping train

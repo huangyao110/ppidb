@@ -18,19 +18,12 @@ padding; KV-cache is enabled by default (transformers >= 4.30).
 import argparse
 import os
 import re
-import sys
 import time
 import warnings
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
-import sentencepiece as spm
-import torch
-from huggingface_hub import snapshot_download
-from torch.utils.data import DataLoader, Dataset
-from tqdm import tqdm
-from transformers import T5ForConditionalGeneration
+from Bio import SeqIO
 
 warnings.filterwarnings("ignore")
 
@@ -59,7 +52,7 @@ def parse_arguments():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("-i", "--input", type=str, required=True,
-                   help="CSV (id,sequence) of AA sequences to translate")
+                   help="CSV (id,sequence) or FASTA of AA sequences to translate")
     p.add_argument("-o", "--output", type=str, required=True,
                    help="output FASTA path (will be overwritten)")
     p.add_argument("--model", type=str, default=DEFAULT_MODEL)
@@ -72,7 +65,25 @@ def parse_arguments():
     return p.parse_args()
 
 
-class AASeqDataset(Dataset):
+def read_sequences(path: str) -> pd.DataFrame:
+    """Return an id,sequence DataFrame from a CSV or FASTA input."""
+    input_path = Path(path)
+    if input_path.suffix.lower() in {".fa", ".faa", ".fasta", ".fna"}:
+        records = [
+            {"id": str(record.id), "sequence": str(record.seq).strip()}
+            for record in SeqIO.parse(input_path, "fasta")
+        ]
+        return pd.DataFrame(records, columns=["id", "sequence"])
+
+    df = pd.read_csv(input_path)
+    df.columns = [c.strip() for c in df.columns]
+    missing = {"id", "sequence"} - set(df.columns)
+    if missing:
+        raise ValueError(f"{path}: expected id and sequence columns, got {list(df.columns)}")
+    return df[["id", "sequence"]].copy()
+
+
+class AASeqDataset:
     def __init__(self, ids, seqs):
         self.ids = ids
         self.seqs = seqs
@@ -106,6 +117,13 @@ def _ids_to_3di(token_ids):
 
 def main():
     args = parse_arguments()
+    import sentencepiece as spm
+    import torch
+    from huggingface_hub import snapshot_download
+    from torch.utils.data import DataLoader
+    from tqdm import tqdm
+    from transformers import T5ForConditionalGeneration
+
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -122,8 +140,7 @@ def main():
         model = model.half()
 
     # Load AA sequences
-    df = pd.read_csv(args.input)
-    df.columns = [c.strip() for c in df.columns]
+    df = read_sequences(args.input)
     df["id"] = df["id"].astype(str)
     df["sequence"] = df["sequence"].astype(str).str.strip()
     # Sort by length descending — long sequences first surface OOM fast.

@@ -14,6 +14,8 @@ DATA_COMMANDS: dict[str, str] = {
     "dedup": "p2psiglip_db.data.dedup_merged",
     "download-data": "p2psiglip_db.data.download_database",
     "fix-ppidb-evidence": "p2psiglip_db.data.fix_ppidb_evidence_labels",
+    "3di": "p2psiglip_db.embeds.get_3di",
+    "get-3di": "p2psiglip_db.embeds.get_3di",
     "h5": "p2psiglip_db.data.create_ppi_h5_esm",
     "host-benchmarks": "p2psiglip_db.data.prepare_host_corpus_benchmarks",
     "host-corpus": "p2psiglip_db.data.prepare_host_pathogen_corpus",
@@ -41,6 +43,8 @@ DATA_COMMAND_DESCRIPTIONS: dict[str, str] = {
     "dedup": "deduplicate merged interaction pairs after source merging",
     "download-data": "download a published data archive, extract into data/, and validate it",
     "fix-ppidb-evidence": "repair PPIDB evidence labels from original PPIDB metadata",
+    "3di": "generate 3Di FASTA with foldseek, ProstT5, or the convolutional head",
+    "get-3di": "alias of 3di",
     "h5": "build an HDF5 PPI dataset from pair CSVs and embedding arrays",
     "host-benchmarks": "prepare host/pathogen benchmark split files",
     "host-corpus": "prepare the host/pathogen corpus",
@@ -68,6 +72,7 @@ STRUCTURE_COMMANDS: dict[str, str] = {
     "download-afdb-manifest": "p2psiglip_db.embeds.download_afdb_from_uniprot_manifest",
     "export-unmatched": "p2psiglip_db.embeds.export_unmatched_sequences",
     "extract-3di": "p2psiglip_db.embeds.extract_structure_3di",
+    "3di": "p2psiglip_db.embeds.get_3di",
     "map-afdb": "p2psiglip_db.embeds.map_afdb_uniprot_ids",
     "minifold": "p2psiglip_db.embeds.minifold_predict",
     "predict-3di": "p2psiglip_db.embeds.predict_3di",
@@ -82,6 +87,7 @@ STRUCTURE_COMMAND_DESCRIPTIONS: dict[str, str] = {
     "download-afdb-manifest": "download AFDB structures listed in a UniProt manifest",
     "export-unmatched": "export sequences still missing usable structures",
     "extract-3di": "extract Foldseek 3Di sequences from available structures",
+    "3di": "unified 3Di FASTA interface: foldseek, ProstT5, or convolutional head",
     "map-afdb": "map project sequence IDs to AFDB/UniProt accessions",
     "minifold": "low-level MiniFold prediction wrapper; prefer top-level struct for new runs",
     "predict-3di": "predict 3Di tokens with the ProstT5 3Di predictor",
@@ -151,6 +157,11 @@ Primary workflows:
   ppidb.py embed esm2 -i data/merged/sequences.csv -o data/embeds/esm2 --pool residue
       Extract PLM embeddings. Most extractors support --pool mean|max|cls|residue.
 
+  ppidb.py 3di foldseek -i data/embeds/manifests/strucs/sequence_structure_sources.tsv
+      --sequence-csv data/merged/sequences.csv -o data/embeds/manifests/strucs/structure_3di_full.fasta
+      Generate lowercase 3Di FASTA with foldseek, ProstT5 generation, or a
+      ProstT5+CNN head.
+
   ppidb.py struct -i data/merged/sequences.csv -o data/embeds/strucs/simplefold_100M
       Predict monomer structures. Defaults to SimpleFold; use --backend minifold
       for MiniFold.
@@ -163,6 +174,8 @@ Important command groups:
   embed
       Dispatch to PLM extractors: esmc, esm2, prott5, prostt5, prostt5_3di,
       saprot, profam, prosst_2048.
+  3di / get-3di
+      Produce 3Di FASTA for downstream saprot/prostt5_3di embedding.
   struct
       User-facing structure prediction CLI.
   structure

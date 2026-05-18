@@ -14,14 +14,20 @@ from Bio import SeqIO
 
 
 MD5_RE = re.compile(r"[0-9a-f]{32}")
+STRUCTURE_SUFFIXES = (".pdb", ".pdb.gz", ".cif", ".cif.gz", ".mmcif", ".mmcif.gz")
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="Batch Foldseek 3Di extraction from sequence_structure_sources.tsv.",
+        description="Batch Foldseek 3Di extraction from a source TSV, structure file, or structure directory.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--source-tsv", type=Path, default=Path("data/embeds/manifests/strucs/sequence_structure_sources.tsv"))
+    p.add_argument(
+        "--source-tsv",
+        type=Path,
+        default=Path("data/embeds/manifests/strucs/sequence_structure_sources.tsv"),
+        help="sequence_structure_sources.tsv, one PDB/mmCIF file, or a directory of structures",
+    )
     p.add_argument("--sequence-csv", action="append", type=Path, default=None)
     p.add_argument("--foldseek-bin", type=Path, default=Path("external/foldseek/bin/foldseek"))
     p.add_argument("--out-fasta", type=Path, default=Path("data/embeds/manifests/strucs/structure_3di_full.fasta"))
@@ -49,6 +55,45 @@ def load_sequences(paths: list[Path]) -> dict[str, str]:
     return seqs
 
 
+def is_structure_file(path: Path) -> bool:
+    name = path.name.lower()
+    return any(name.endswith(suffix) for suffix in STRUCTURE_SUFFIXES)
+
+
+def structure_id(path: Path) -> str:
+    name = path.name
+    lower = name.lower()
+    for suffix in STRUCTURE_SUFFIXES:
+        if lower.endswith(suffix):
+            return name[: -len(suffix)]
+    return path.stem
+
+
+def read_source(path: Path) -> tuple[pd.DataFrame, bool]:
+    if path.is_dir():
+        structures = sorted(p for p in path.rglob("*") if p.is_file() and is_structure_file(p))
+        return source_from_structures(structures, "directory"), True
+    if path.is_file() and is_structure_file(path):
+        return source_from_structures([path], "file"), True
+    sep = "," if path.suffix.lower() == ".csv" else "\t"
+    return pd.read_csv(path, sep=sep), False
+
+
+def source_from_structures(paths: list[Path], source: str) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "sequence_md5": structure_id(path),
+                "structure_status": "available",
+                "structure_path": str(path),
+                "structure_source": source,
+            }
+            for path in paths
+        ],
+        columns=["sequence_md5", "structure_status", "structure_path", "structure_source"],
+    )
+
+
 def read_done(path: Path) -> set[str]:
     if not path.is_file():
         return set()
@@ -59,21 +104,29 @@ def read_done(path: Path) -> set[str]:
     return done
 
 
-def parse_fasta_by_md5(path: Path, aa_lengths: dict[str, int]) -> dict[str, tuple[str, str]]:
+def header_candidates(header: str) -> list[str]:
+    record_id = header.split()[0] if header.split() else header
+    candidates = [record_id, structure_id(Path(record_id)), Path(record_id).stem]
+    match = MD5_RE.search(header)
+    if match is not None:
+        candidates.insert(0, match.group(0))
+    return list(dict.fromkeys(candidates))
+
+
+def parse_fasta_by_id(path: Path, aa_lengths: dict[str, int]) -> dict[str, tuple[str, str]]:
     by_id: dict[str, list[tuple[str, str]]] = {}
     for record in SeqIO.parse(path, "fasta"):
         header = str(record.description)
-        match = MD5_RE.search(header)
-        if match is None:
-            continue
-        md5 = match.group(0)
-        by_id.setdefault(md5, []).append((str(record.seq).lower(), header))
+        for sequence_id in header_candidates(header):
+            if sequence_id in aa_lengths:
+                by_id.setdefault(sequence_id, []).append((str(record.seq).lower(), header))
+                break
 
     selected: dict[str, tuple[str, str]] = {}
-    for md5, entries in by_id.items():
-        target_len = aa_lengths.get(md5, 0)
+    for sequence_id, entries in by_id.items():
+        target_len = aa_lengths.get(sequence_id, 0)
         seq, header = min(entries, key=lambda item: (abs(len(item[0]) - target_len), -len(item[0])))
-        selected[md5] = (seq, header)
+        selected[sequence_id] = (seq, header)
     return selected
 
 
@@ -126,14 +179,16 @@ def main() -> None:
     args = build_parser()
     if not args.foldseek_bin.is_file():
         raise FileNotFoundError(args.foldseek_bin)
-    if not args.source_tsv.is_file():
+    if not args.source_tsv.exists():
         raise FileNotFoundError(args.source_tsv)
 
-    sequence_csvs = args.sequence_csv or discover_sequence_csvs()
+    src, direct_structure_input = read_source(args.source_tsv)
+    sequence_csvs = args.sequence_csv or ([] if direct_structure_input else discover_sequence_csvs())
     seqs = load_sequences(sequence_csvs)
+    if direct_structure_input and not seqs:
+        seqs = {str(sequence_id): "" for sequence_id in src["sequence_md5"].astype(str)}
     print(f"loaded sequences: {len(seqs):,} from {len(sequence_csvs)} files", flush=True)
 
-    src = pd.read_csv(args.source_tsv, sep="\t")
     src["sequence_md5"] = src["sequence_md5"].astype(str)
     available = src[src["structure_status"].astype(str).eq("available")].copy()
     available = available[available["sequence_md5"].isin(seqs)]
@@ -166,7 +221,7 @@ def main() -> None:
         rows: list[dict[str, object]] = []
         try:
             ss_fasta = run_foldseek(args.foldseek_bin, paths, args.work_dir, args.threads)
-            extracted = parse_fasta_by_md5(ss_fasta, aa_lengths)
+            extracted = parse_fasta_by_id(ss_fasta, aa_lengths)
         except subprocess.CalledProcessError as exc:
             extracted = {}
             batch_error = str(exc)
