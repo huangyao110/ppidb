@@ -15,17 +15,19 @@ import time
 import warnings
 from pathlib import Path
 
-import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from p2psiglip_db.embeds.io import (
+    POOL_CHOICES,
     ProteinDataset,
     atomic_save_npy,
     filter_existing_outputs,
     load_input_dataframe,
+    normalize_pool_mode,
     pair_collate,
+    pooled_array,
     safe_id,
     sort_by_sequence_length,
 )
@@ -50,8 +52,10 @@ def parse_arguments():
                    help="Device override, e.g. cuda, cuda:0, or cpu")
     p.add_argument("--no-auto-download", action="store_true",
                    help="Do not auto-download the default ProFam-1 checkpoint")
+    p.add_argument("--pool", choices=POOL_CHOICES, default=None,
+                   help="Output pooling mode: mean, max, cls, residue. Default is residue for ProFam")
     p.add_argument("--mean-pool", action="store_true",
-                   help="Save mean-pooled (D,) fp32 instead of per-residue (L,D) fp16")
+                   help="Legacy alias for --pool mean")
     return p.parse_args()
 
 
@@ -106,6 +110,7 @@ def build_input_ids(tokenizer, seqs, device):
 
 def main():
     args = parse_arguments()
+    args.pool = normalize_pool_mode(args.pool, default="residue", mean_pool=args.mean_pool)
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -146,17 +151,22 @@ def main():
                 use_cache=False,
                 return_dict=True,
             )
-            hidden = outputs.last_hidden_state.float().cpu()
+            hidden = outputs.last_hidden_state.float().cpu().numpy()
             for i, prot_id in enumerate(batch_ids):
                 L = lengths[i]
-                res = hidden[i, 2:2 + L].numpy()
+                res = hidden[i, 2:2 + L]
                 out_path = out_dir / f"{safe_id(prot_id)}.npy"
-                if args.mean_pool:
-                    atomic_save_npy(out_path, res.mean(axis=0).astype(np.float32))
-                else:
-                    atomic_save_npy(out_path, res.astype(np.float16))
+                atomic_save_npy(
+                    out_path,
+                    pooled_array(
+                        res,
+                        args.pool,
+                        cls_embedding=hidden[i, 0],
+                        cls_name="[start-of-document]",
+                    ),
+                )
 
-    mode = "mean-pooled" if args.mean_pool else "per-residue"
+    mode = args.pool
     print(
         f"ProFam extraction complete: {len(df):,} in "
         f"{(time.time() - t0) / 60:.1f} min, dim={hidden_dim}, mode={mode}",

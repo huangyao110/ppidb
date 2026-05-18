@@ -37,8 +37,13 @@ Embedding extractors are dispatched through the same runner:
 
 ```bash
 python ppidb.py embed --list
-python ppidb.py embed esmc -i data/merged/sequences.csv -o data/embeds/esmc/
+python ppidb.py embed esmc -i data/merged/sequences.csv -o data/embeds/esmc/ --pool mean
+python ppidb.py embed esm2 -i data/merged/sequences.csv -o data/embeds/esm2_residue/ --pool residue
 ```
+
+Most embedding commands support `--pool mean`, `--pool max`, `--pool cls`, or
+`--pool residue`. Pooled outputs are one `(D,)` fp32 `.npy` per sequence;
+residue outputs are `(L,D)` fp16 arrays.
 
 Structure helper commands live under the `structure` namespace:
 

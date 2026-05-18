@@ -15,16 +15,20 @@ import time
 import warnings
 from pathlib import Path
 
-import numpy as np
 import torch
-import sentencepiece as spm
 from Bio import SeqIO
-from huggingface_hub import snapshot_download
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from transformers import T5EncoderModel
 
-from p2psiglip_db.embeds.io import ProteinDataset, atomic_save_npy, pair_collate, safe_id
+from p2psiglip_db.embeds.io import (
+    POOL_CHOICES,
+    ProteinDataset,
+    atomic_save_npy,
+    normalize_pool_mode,
+    pair_collate,
+    pooled_array,
+    safe_id,
+)
 
 warnings.filterwarnings("ignore")
 
@@ -40,8 +44,10 @@ def parse_arguments():
     p.add_argument("-i", "--input", type=str, required=True,
                    help="3Di FASTA file (lowercase letters)")
     p.add_argument("-o", "--output_dir", type=str, required=True)
+    p.add_argument("--pool", choices=POOL_CHOICES, default=None,
+                   help="output pooling mode: mean, max, cls, residue")
     p.add_argument("--per-residue", action="store_true",
-                   help="save per-residue (L, 1024) fp16 instead of mean-pooled (1024,) fp32")
+                   help="legacy alias for --pool residue")
     p.add_argument("--model", type=str, default=DEFAULT_MODEL)
     p.add_argument("--batch_size", type=int, default=8)
     p.add_argument("--max_len", type=int, default=1024)
@@ -68,11 +74,16 @@ def _encode_3di(sp, tdi_seq, max_len):
 
 def main():
     args = parse_arguments()
+    args.pool = normalize_pool_mode(args.pool, default="mean", per_residue=args.per_residue)
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"loading {args.model} encoder ...", flush=True)
+    import sentencepiece as spm
+    from huggingface_hub import snapshot_download
+    from transformers import T5EncoderModel
+
     snapshot_dir = snapshot_download(args.model)
     sp = spm.SentencePieceProcessor()
     sp.Load(os.path.join(snapshot_dir, "spiece.model"))
@@ -113,22 +124,16 @@ def main():
 
             # Strip <fold2AA> prefix (pos 0) and </s> trailing token per row.
             seq_lens = attn_mask.sum(dim=1)
-            if args.per_residue:
-                # Save per-residue (L_real, 1024) fp16 — drop prefix + EOS
-                out_cpu = out.float().cpu()
-                for i, prot_id in enumerate(batch_ids):
-                    Li = int(seq_lens[i])
-                    res = out_cpu[i, 1:Li - 1].numpy().astype(np.float16)
-                    atomic_save_npy(out_dir / f"{safe_id(prot_id)}.npy", res)
-            else:
-                mask = attn_mask.unsqueeze(-1).float()
-                mask[:, 0, :] = 0.0  # drop <fold2AA>
-                for i, Li in enumerate(seq_lens.tolist()):
-                    mask[i, Li - 1, 0] = 0.0  # drop </s>
-                pooled = (out.float() * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1.0)
-                embs = pooled.cpu().numpy()
-                for prot_id, vec in zip(batch_ids, embs):
-                    atomic_save_npy(out_dir / f"{safe_id(prot_id)}.npy", vec.astype(np.float32))
+            out_cpu = out.detach().float().cpu().numpy()
+            for i, prot_id in enumerate(batch_ids):
+                Li = int(seq_lens[i])
+                vec = pooled_array(
+                    out_cpu[i, 1:Li - 1, :],
+                    args.pool,
+                    cls_embedding=out_cpu[i, 0, :],
+                    cls_name="<fold2AA>",
+                )
+                atomic_save_npy(out_dir / f"{safe_id(prot_id)}.npy", vec)
 
     print(f"ProstT5(3Di) 编码完成: {len(ids):,} in {(time.time()-t0)/60:.1f} min, dim=1024", flush=True)
 

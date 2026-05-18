@@ -9,7 +9,6 @@ import time
 from pathlib import Path
 
 import torch
-import numpy as np
 import argparse
 import warnings
 from torch.utils.data import DataLoader
@@ -18,11 +17,14 @@ from multiprocessing import Process, set_start_method
 from tqdm import tqdm
 
 from p2psiglip_db.embeds.io import (
+    POOL_CHOICES,
     ProteinDataset,
     atomic_save_npy,
     filter_existing_outputs,
     load_input_dataframe,
+    normalize_pool_mode,
     pair_collate,
+    pooled_array,
     safe_id,
     sort_by_sequence_length,
     split_dataframe_by_workers,
@@ -42,8 +44,10 @@ def parse_arguments():
     p.add_argument("--batch_size", type=int, default=4,
                    help="batch_size (默认 4，ESM2-650M 在 1024-tok 序列下显存敏感)")
     p.add_argument("--max_len", type=int, default=1024)
+    p.add_argument("--pool", choices=POOL_CHOICES, default=None,
+                   help="输出池化模式: mean, max, cls, residue")
     p.add_argument("--per-residue", action="store_true",
-                   help="保存 per-residue 嵌入 (L,1280) fp16 而非 mean-pooled (1280,) fp32")
+                   help="兼容旧参数；等同于 --pool residue")
     return p.parse_args()
 
 
@@ -68,25 +72,20 @@ def run_worker(gpu_id, subset_df, args):
                             max_length=args.max_len + 2,  # +2 for CLS/EOS
                             return_tensors="pt").to(device)
             out = model(**enc).last_hidden_state           # (B, L, 1280)
-            mask = enc.attention_mask.unsqueeze(-1).float()  # (B, L, 1)
-            # ESM2 special tokens: <cls> at pos 0, <eos> at last real position.
-            # Zero them out before mean-pool by removing pos 0 and the last attended pos per row.
-            mask[:, 0, :] = 0.0
+            # ESM2 token layout: <cls>, residues, <eos>, pads.
             seq_lens = enc.attention_mask.sum(dim=1)        # (B,)
-            for i, L in enumerate(seq_lens.tolist()):
-                mask[i, L - 1, 0] = 0.0
-            if args.per_residue:
-                embs = []
-                for i, L in enumerate(seq_lens.tolist()):
-                    embs.append(out[i, 1:L - 1, :].detach().cpu().numpy())
-            else:
-                pooled = (out * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1.0)
-                embs = pooled.cpu().numpy()                    # (B, 1280)
+            out_cpu = out.detach().float().cpu().numpy()
 
-            for prot_id, vec in zip(batch_ids, embs):
+            for i, prot_id in enumerate(batch_ids):
+                L = int(seq_lens[i])
+                vec = pooled_array(
+                    out_cpu[i, 1:L - 1, :],
+                    args.pool,
+                    cls_embedding=out_cpu[i, 0, :],
+                )
                 atomic_save_npy(
                     Path(args.output_dir) / f"{safe_id(prot_id)}.npy",
-                    vec.astype(np.float16 if args.per_residue else np.float32),
+                    vec,
                 )
 
 
@@ -97,6 +96,7 @@ if __name__ == "__main__":
         pass
 
     args = parse_arguments()
+    args.pool = normalize_pool_mode(args.pool, default="mean", per_residue=args.per_residue)
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 

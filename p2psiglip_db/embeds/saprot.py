@@ -15,7 +15,6 @@ import time
 import warnings
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import torch
 from Bio import SeqIO
@@ -23,7 +22,15 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import AutoModel, AutoTokenizer
 
-from p2psiglip_db.embeds.io import ProteinDataset, atomic_save_npy, pair_collate, safe_id
+from p2psiglip_db.embeds.io import (
+    POOL_CHOICES,
+    ProteinDataset,
+    atomic_save_npy,
+    normalize_pool_mode,
+    pair_collate,
+    pooled_array,
+    safe_id,
+)
 
 warnings.filterwarnings("ignore")
 
@@ -40,8 +47,10 @@ def parse_arguments():
     p.add_argument("--model", type=str, default=DEFAULT_MODEL)
     p.add_argument("--batch_size", type=int, default=4)
     p.add_argument("--max_len", type=int, default=1024)
+    p.add_argument("--pool", choices=POOL_CHOICES, default=None,
+                   help="output pooling mode: mean, max, cls, residue")
     p.add_argument("--per-residue", action="store_true",
-                   help="save per-residue (L, 1280) fp16 instead of mean-pooled (1280,) fp32")
+                   help="legacy alias for --pool residue")
     p.add_argument("--overwrite", action="store_true",
                    help="recompute and replace existing .npy files")
     return p.parse_args()
@@ -57,6 +66,7 @@ def _build_pair_seq(aa: str, tdi: str, max_len: int) -> str:
 
 def main():
     args = parse_arguments()
+    args.pool = normalize_pool_mode(args.pool, default="mean", per_residue=args.per_residue)
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -121,23 +131,15 @@ def main():
             out = model(**enc).last_hidden_state  # (B, L, 1280)
 
             seq_lens = enc.attention_mask.sum(dim=1)
-            if args.per_residue:
-                out_cpu = out.float().cpu()
-                for i, prot_id in enumerate(batch_ids):
-                    Li = int(seq_lens[i])
-                    res = out_cpu[i, 1:Li - 1].numpy().astype(np.float16)
-                    atomic_save_npy(out_dir / f"{safe_id(prot_id)}.npy", res)
-            else:
-                # Drop CLS (pos 0) and EOS (last attended pos per row)
-                mask = enc.attention_mask.unsqueeze(-1).float()
-                mask[:, 0, :] = 0.0
-                for i, Li in enumerate(seq_lens.tolist()):
-                    mask[i, Li - 1, 0] = 0.0
-                pooled = (out.float() * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1.0)
-                embs = pooled.cpu().numpy()
-
-                for prot_id, vec in zip(batch_ids, embs):
-                    atomic_save_npy(out_dir / f"{safe_id(prot_id)}.npy", vec.astype(np.float32))
+            out_cpu = out.detach().float().cpu().numpy()
+            for i, prot_id in enumerate(batch_ids):
+                Li = int(seq_lens[i])
+                vec = pooled_array(
+                    out_cpu[i, 1:Li - 1, :],
+                    args.pool,
+                    cls_embedding=out_cpu[i, 0, :],
+                )
+                atomic_save_npy(out_dir / f"{safe_id(prot_id)}.npy", vec)
 
     print(f"SaProt 编码完成: {len(ids):,} in {(time.time()-t0)/60:.1f} min, dim=1280", flush=True)
 

@@ -20,14 +20,19 @@ import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import torch
 from tqdm import tqdm
 from transformers import AutoModelForMaskedLM, AutoTokenizer
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from p2psiglip_db.embeds.io import atomic_save_npy, safe_id
+from p2psiglip_db.embeds.io import (
+    POOL_CHOICES,
+    atomic_save_npy,
+    normalize_pool_mode,
+    pooled_array,
+    safe_id,
+)
 
 warnings.filterwarnings("ignore")
 
@@ -76,6 +81,8 @@ def parse_arguments():
     parser.add_argument("--device", default=None)
     parser.add_argument("--model-dtype", choices=["float32", "float16", "bfloat16"],
                         default="float16")
+    parser.add_argument("--pool", choices=POOL_CHOICES, default=None,
+                        help="Output pooling mode: mean, max, cls, residue. Default is residue for ProSST")
     parser.add_argument("--sort-by-length", choices=["asc", "desc", "none"],
                         default="asc")
     parser.add_argument("--include-sources", default=None,
@@ -282,14 +289,19 @@ def encode_and_save(
         hidden = outputs.last_hidden_state.float().cpu()
         for i, (record, length) in enumerate(zip(batch_records, lengths)):
             out_path = output_dir / f"{safe_id(record.protein_id)}.npy"
-            array = hidden[i, 1:1 + length].numpy().astype(np.float16)
+            hidden_i = hidden[i].numpy()
+            array = pooled_array(
+                hidden_i[1:1 + length],
+                args.pool,
+                cls_embedding=hidden_i[0],
+            )
             atomic_save_npy(out_path, array)
             rows.append(
                 {
                     "id": record.protein_id,
                     "status": "ok",
                     "sequence_len": len(record.sequence),
-                    "saved_len": int(array.shape[0]),
+                    "saved_len": int(array.shape[0] if array.ndim == 2 else 1),
                     "hidden_dim": hidden_dim,
                     "structure_path": record.structure_path,
                     "structure_source": record.structure_source,
@@ -509,6 +521,7 @@ class SSTChunkRunner:
 
 def main():
     args = parse_arguments()
+    args.pool = normalize_pool_mode(args.pool, default="residue")
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = Path(args.manifest_output) if args.manifest_output else None

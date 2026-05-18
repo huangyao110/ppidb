@@ -8,14 +8,18 @@ preserves the multiprocessing.spawn semantics each PLM extractor depends on
 for one-process-per-GPU parallelism.
 
 Usage:
-    python p2psiglip_db/data/get_embeddings.py --plm esmc        -i seqs.csv  -o embed/esmc/
+    python p2psiglip_db/data/get_embeddings.py --plm esmc        -i seqs.csv  -o embed/esmc/ --pool mean
     python p2psiglip_db/data/get_embeddings.py --plm prostt5_3di -i 3di.fasta -o embed/prostt5_3di/
-    python p2psiglip_db/data/get_embeddings.py --plm saprot      -i aa.fasta --tdi-input 3di.fasta -o embed/saprot/
+    python p2psiglip_db/data/get_embeddings.py --plm saprot      -i aa.csv --tdi-fasta 3di.fasta -o embed/saprot/
     python p2psiglip_db/data/get_embeddings.py --plm profam      -i seqs.csv  -o embed/profam/
     python p2psiglip_db/data/get_embeddings.py --list            # show available PLMs
 
 For per-PLM flag help:
     python p2psiglip_db/data/get_embeddings.py --plm <name> --help
+
+Most extractors support --pool {mean,max,cls,residue}. Pooled outputs are
+(D,) fp32 arrays; residue outputs are (L,D) fp16 arrays. ProtT5 does not expose
+a CLS/BOS token, so use mean, max, or residue there.
 """
 import argparse
 import subprocess
@@ -24,6 +28,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from p2psiglip_db.embeds import PLMS
+
+PLM_MODULES = {
+    "prosst_2048": "prosst",
+}
 
 
 def main():
@@ -50,7 +58,8 @@ def main():
     if not args.plm:
         p.error('--plm is required (or --list / --help)')
 
-    cmd = [sys.executable, '-m', f'p2psiglip_db.embeds.{args.plm}', *remaining]
+    module_name = PLM_MODULES.get(args.plm, args.plm)
+    cmd = [sys.executable, '-m', f'p2psiglip_db.embeds.{module_name}', *remaining]
     if args.help:
         cmd.append('--help')
     return subprocess.run(cmd).returncode

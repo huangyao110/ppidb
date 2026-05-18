@@ -14,21 +14,20 @@ import time
 from pathlib import Path
 
 import torch
-import numpy as np
 import argparse
 import warnings
-import sentencepiece as spm
-from huggingface_hub import snapshot_download
 from torch.utils.data import DataLoader
-from transformers import T5EncoderModel
 from multiprocessing import Process, set_start_method
 from tqdm import tqdm
 
 from p2psiglip_db.embeds.io import (
+    POOL_CHOICES,
     ProteinDataset,
     atomic_save_npy,
     load_input_dataframe,
+    normalize_pool_mode,
     pair_collate,
+    pooled_array,
     safe_id,
     sort_by_sequence_length,
     split_dataframe_by_workers,
@@ -57,10 +56,14 @@ def parse_arguments():
     p.add_argument("--model", type=str, default=DEFAULT_MODEL)
     p.add_argument("--batch_size", type=int, default=4)
     p.add_argument("--max_len", type=int, default=1024)
+    p.add_argument("--pool", choices=POOL_CHOICES, default=None,
+                   help="输出池化模式: mean, max, cls, residue")
+    p.add_argument("--per-residue", action="store_true",
+                   help="兼容参数；等同于 --pool residue")
     return p.parse_args()
 
 
-def _encode_one(sp: spm.SentencePieceProcessor, seq: str, max_len: int) -> list[int]:
+def _encode_one(sp, seq: str, max_len: int) -> list[int]:
     """Tokenize a single AA sequence to ProstT5 input ids: [<AA2fold>, AA_1, ..., AA_n, </s>]."""
     s = RARE_AA_RE.sub("X", seq.upper())[: max_len]
     spaced = " ".join(list(s))
@@ -72,6 +75,10 @@ def run_worker(gpu_id, subset_df, args):
     device = torch.device(f"cuda:{gpu_id}")
     tag = f"GPU-{gpu_id}"
     print(f"[{tag}] loading {args.model} ...", flush=True)
+    import sentencepiece as spm
+    from huggingface_hub import snapshot_download
+    from transformers import T5EncoderModel
+
     snapshot_dir = snapshot_download(args.model)
     sp = spm.SentencePieceProcessor()
     sp.Load(os.path.join(snapshot_dir, "spiece.model"))
@@ -102,19 +109,20 @@ def run_worker(gpu_id, subset_df, args):
             out = model(input_ids=input_ids, attention_mask=attn_mask).last_hidden_state  # (B, L, 1024)
 
             # Token layout per row: [<AA2fold>, AA_1, ..., AA_n, </s>, <pad>...]
-            # Mean-pool only over the AA residues (drop AA2fold + </s> + pads).
-            mask = attn_mask.unsqueeze(-1).float()
-            mask[:, 0, :] = 0.0  # drop <AA2fold>
             seq_lens = attn_mask.sum(dim=1)
-            for i, Li in enumerate(seq_lens.tolist()):
-                mask[i, Li - 1, 0] = 0.0  # drop </s>
-            pooled = (out.float() * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1.0)
-            embs = pooled.cpu().numpy()  # (B, 1024)
+            out_cpu = out.detach().float().cpu().numpy()
 
-            for prot_id, vec in zip(batch_ids, embs):
+            for i, prot_id in enumerate(batch_ids):
+                Li = int(seq_lens[i])
+                vec = pooled_array(
+                    out_cpu[i, 1:Li - 1, :],
+                    args.pool,
+                    cls_embedding=out_cpu[i, 0, :],
+                    cls_name="<AA2fold>",
+                )
                 atomic_save_npy(
                     Path(args.output_dir) / f"{safe_id(prot_id)}.npy",
-                    vec.astype(np.float32),
+                    vec,
                 )
 
 
@@ -125,6 +133,7 @@ if __name__ == "__main__":
         pass
 
     args = parse_arguments()
+    args.pool = normalize_pool_mode(args.pool, default="mean", per_residue=args.per_residue)
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 

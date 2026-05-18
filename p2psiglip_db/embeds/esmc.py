@@ -2,7 +2,6 @@ import time
 from pathlib import Path
 
 import torch
-import numpy as np
 import argparse
 import warnings
 from torch.utils.data import DataLoader
@@ -12,9 +11,12 @@ from multiprocessing import Process, set_start_method
 from tqdm import tqdm
 
 from p2psiglip_db.embeds.io import (
+    POOL_CHOICES,
     ProteinDataset,
     atomic_save_npy,
     load_input_dataframe,
+    normalize_pool_mode,
+    pooled_array,
     safe_id,
     sort_by_sequence_length,
     split_dataframe_by_workers,
@@ -32,8 +34,10 @@ def parse_arguments():
     parser.add_argument("--model", type=str, default="esmc_300m", help="ESMC 模型名")
     parser.add_argument("--batch_size", type=int, default=128, help="ESMC 较大，建议 Batch Size 设小一点")
     parser.add_argument("--max_len", type=int, default=1024, help="最大截断长度")
+    parser.add_argument("--pool", choices=POOL_CHOICES, default=None,
+                        help="输出池化模式: mean, max, cls, residue")
     parser.add_argument("--per-residue", action="store_true",
-                        help="保存 per-residue 嵌入 (L, 960) fp16 而非 mean-pooled (960,)；用于 ColBERT-style late interaction")
+                        help="兼容旧参数；等同于 --pool residue")
     return parser.parse_args()
 
 # ==============================================================================
@@ -77,14 +81,14 @@ def run_worker(gpu_id, subset_df, args):
 
                 # 去掉 BOS 和 EOS (第一行和最后一行)
                 core_residues = residue_embeds[1:-1, :]
+                cls_embedding = residue_embeds[0, :]
 
-                # 4. 保存：per-residue (L, 960) fp16 或 mean-pooled (960,) fp32
+                # 4. 保存：residue (L, 960) fp16 或 pooled (960,) fp32
                 out_path = Path(args.output_dir) / f"{safe_id(prot_id)}.npy"
-                if args.per_residue:
-                    atomic_save_npy(out_path, core_residues.astype(np.float16))
-                else:
-                    protein_embedding = np.mean(core_residues, axis=0)
-                    atomic_save_npy(out_path, protein_embedding)
+                atomic_save_npy(
+                    out_path,
+                    pooled_array(core_residues, args.pool, cls_embedding=cls_embedding),
+                )
 
 if __name__ == "__main__":
     try:
@@ -93,6 +97,7 @@ if __name__ == "__main__":
         pass
 
     args = parse_arguments()
+    args.pool = normalize_pool_mode(args.pool, default="mean", per_residue=args.per_residue)
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     
